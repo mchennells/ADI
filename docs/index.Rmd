@@ -647,7 +647,7 @@ f_decile_change_worst
 
 Annual Deprivation Index (ADI) is a summation of (1) job claims, (2) crime statistics and (3) mental health cases. Combined with data on population per area, this allows us to calculate a rate (ADI cases/person) for each LSOA or Area. As pointed out by the publishers, there are many advantages to having a cardinal scale; the purpose of this doc is to briefly explore these.
 
-## And then this?
+## Analysis
 One advantage of having ADI rates / area is that we can compare rates across areas. There are many ways to do this. While the IMD involves a relative measure of rank, it carries no information on distribution of impacts. So the first thing we can do is compare rates (so still a relative measure) but look at rate inequality across LSOAs.
 
 The following is a Lorenz curve of ADI rates. It shows cumulative ADI cases (per LSOA, weighted by LSOA population) by cumulative population (ranked by ADI rate, with highest rates to the right hand side), broken into 10 equal population-sized deciles. The 45 degree line represents perfect equality, such that, for example, 20% of the population have 20% of all ADI cases. A curve lying below this reflects the fact that some deciles have more cases than others. 
