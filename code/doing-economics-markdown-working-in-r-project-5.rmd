@@ -1,0 +1,728 @@
+---
+title: "Empirical Project 5: Working in R code"
+---
+
+# Empirical Project 5 Working in R
+
+These code downloads have been constructed as supplements to the full Doing Economics projects (https://core-econ.org/doing-economics/). You'll need to download the data before running the code that follows. 
+
+## Getting started in R
+
+For this project you will need the following packages:
+
+-   `tidyverse`, to help with data manipulation
+-   `readxl`, to import an Excel spreadsheet
+-   `ineq`, to calculate inequality measures
+-   `reshape2`, to rearrange a dataframe.
+
+If you need to install any of these packages, run the following code:
+
+```{r}
+install.packages(c(
+  "readxl", "tidyverse",
+  "ineq", "reshape2"))
+```
+
+You can import these libraries now, or when they are used in the R walk-throughs below.
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(ineq)
+library(reshape2)
+```
+
+## Part 5.1 Measuring income inequality
+
+### R walk-through 5.1 Importing an Excel file (either `.xlsx` or .`xls` format) into R  
+  
+As we are importing an Excel file, we use the `read_excel` function from the `readxl` package. The file is called `GCIPrawdata.xlsx`. Before you import the file into R, open the datafile in Excel to understand its structure. You will see that the data is all in one worksheet (which is convenient), and that the headings for the variables are in the third row. Hence we will use the `skip = 2` option in the `read_excel` function to skip the first two rows.  
+  
+```{r}  
+library(tidyverse)  
+library(readxl)  
+
+# Set working directory.
+setwd("YOURFILEPATH")
+decile_data <- read_excel("GCIPrawdata.xlsx", skip = 2)  
+```  
+  
+The data is now in a ‘tibble’ (like a spreadsheet for R). Let’s use the `head` function to look at the first few rows:  
+  
+```{r}  
+head(decile_data)  
+```  
+  
+As you can see, each row shows data for a different country-year combination. The first row is for Afghanistan in 1980, and the first value (in the third column) is 206, for the variable `Decile 1 Income`. This value indicates that the mean annual income of the poorest 10% in Afghanistan was the equivalent of 206 USD (in 1980, adjusted using purchasing power parity). Looking at the next column, you can see that the mean income of the next richest 10% (those in the 11th to 20th percentiles for income) was 350. 
+
+To see the list of variables, we use the `str` function.  
+  
+```{r}  
+str(decile_data)  
+```  
+  
+In addition to the country, year, and the ten income deciles, we have mean income and the population.  
+  
+[End of walk-through]
+
+
+### R walk-through 5.2 Calculating cumulative shares using the `cumsum` function  
+  
+Here we have chosen China (a country that recently underwent enormous economic changes) and the US (a developed country). We use the `subset` function to create a new dataset (called `temp`) containing only the countries and years we need. 
+  
+```{r}
+#  Select the data for the chosen country and years
+sel_Year <- c(1980, 2014)
+sel_Country <- c("United States", "China")
+
+temp <- subset(
+  decile_data, 
+  (decile_data$Country %in% sel_Country) & 
+  (decile_data$Year %in% sel_Year))
+temp
+```
+
+Before we calculate cumulative income shares, we need to calculate the total income for each country-year combination using the mean income and the population size.  
+  
+```{r}  
+print("Total incomes are:")  
+```   
+  
+```{r}  
+total_income <- temp[, "Mean Income"] * 
+  temp[, "Population"]  
+total_income  
+```
+  
+These numbers are very large, so for our purpose it is easier to assume that there is only one person in each decile, in other words the total income is 10 times the mean income. This simplification works because, by definition, each decile has exactly the same number of people (10% of the population).  
+  
+We will be using the very useful `cumsum` function (short for ‘cumulative sum’) to calculate the cumulative income. To see what this function does, look at this simple example.  
+  
+```{r}  
+test <- c(2, 4, 10, 22)  
+cumsum(test)  
+```
+  
+You can see that each number in the sequence is the sum of all the preceding numbers (including itself), for example, we got the third number, 16, by adding 2, 4, and 10. We now apply this function to calculate the cumulative income shares for China (1980) and save them as `cum_inc_share_c80`.  
+  
+```{r}
+# Pick the deciles (Columns 3 to 12) in Row 1 (China, 1980)
+decs_c80 <- unlist(temp[1, 3:12])
+                               
+# The unlist function transforms temp[1, 3:12] from a 
+# tibble to simple vector with data which simplifies the 
+# calculations.
+
+# Give the total income, assuming a population of 10
+total_inc <- 10 * unlist(temp[1, "Mean Income"])
+
+cum_inc_share_c80 = cumsum(decs_c80) / total_inc
+cum_inc_share_c80
+```
+  
+We repeat the same process for China in 2014 (`cum_inc_share_c14`) and for the US in 1980 and 2014 (`cum_inc_share_us80` and `cum_inc_share_us14` respectively).   
+  
+```{r}  
+# For China, 2014  
+# Go to Row 2 (China, 2014)
+decs_c14 <- unlist(temp[2, 3:12])
+
+# Give the total income, assuming a population of 10
+total_inc <- 10 * unlist(temp[2, "Mean Income"]) 
+
+cum_inc_share_c14 = cumsum(decs_c14) / total_inc  
+  
+# For the US, 1980  
+# Select Row 3 (USA, 1980)
+decs_us80 <- unlist(temp[3, 3:12])
+
+# Give the total income, assuming a population of 10
+total_inc <- 10 * unlist(temp[3, "Mean Income"])
+
+cum_inc_share_us80 = cumsum(decs_us80) / total_inc  
+  
+# For the US, 2014  
+# Select Row 4 (USA, 2014)
+decs_us14 <- unlist(temp[4, 3:12])   
+
+# Give the total income, assuming a population of 10 
+total_inc <- 10 * unlist(temp[4, "Mean Income"])
+
+cum_inc_share_us14 = cumsum(decs_us14) / total_inc  
+``` 
+
+[End of walk-through]
+  
+
+### R walk-through 5.3 Drawing Lorenz curves  
+  
+Let us plot the cumulative income shares for China (1980), which we previously stored in the variable `cum_inc_share_c80`. The `plot` function makes the basic chart, with the cumulative income share in blue. We then use the functions `abline` to add the perfect equality line (in black), and `title` to add a chart title. 
+  
+```{r}  
+plot(cum_inc_share_c80, type = "l", col = "blue", 
+  lwd = 2, ylab = "Cumulative income share")  
+
+# Add the perfect equality line 
+abline(a = 0, b = 0.1, col = "black", lwd = 2)
+
+title("Lorenz curve, China, 1980") 
+```
+
+The blue line is the Lorenz curve. The Gini coefficient is the ratio of the area between the two lines and the total area under the black line. We will calculate the Gini coefficient in R walk-through 5.4. 
+  
+Now we add the other Lorenz curves to the chart using the `lines` function. We use the `col=` option to specify a different colour for each line, and the `lty` option to make the line pattern solid for 2014 data and dashed for 1980 data. Finally, we use the `legend` function to add a chart legend in the top left corner of the chart.  
+  
+```{r}  
+plot(cum_inc_share_c80, type = "l", col = "blue", 
+  lty = 2, lwd = 2, xlab = "Deciles", 
+  ylab = "Cumulative income share")  
+
+# Add the perfect equality line 
+abline(a = 0, b = 0.1, col = "black", lwd = 2)  
+
+# lty = 1 = dashed line  
+lines(cum_inc_share_c14, col = "green", lty = 1, lwd = 2)
+
+# lty = 2 = solid line  
+lines(cum_inc_share_us80, col = "red", lty = 2, lwd = 2)
+
+lines(cum_inc_share_us14, col = "orange", 
+  lty = 1, lwd = 2)  
+
+title("Lorenz curves, China and the US (1980 and 2014)")  
+
+legend("topleft", lty = 2:1, lwd = 2, cex = 1.2, legend = 
+  c("China, 1980", "China, 2014",
+    "US, 1980", "US, 2014"),  
+  col = c("blue", "green", "red", "orange"))  
+```  
+
+As the chart shows, the income distribution has changed more clearly for China (from the blue to the green line) than for the US (from the orange to the red line).   
+
+[End of walk-through]
+
+
+### R walk-through 5.4 Calculating Gini coefficients
+
+The Gini coefficient is graphically represented by dividing the area between the perfect equality line and the Lorenz curve by the total area under the perfect equality line (see Section 5.9 (https://tinyco.re/6569324) of *Economy, Society, and Public Policy* for further details). You could calculate this area manually, by decomposing the area under the Lorenz curve into rectangles and triangles, but as with so many problems, someone else has already figured out how to do that and has provided R users with a package (called `ineq`) that does this task for you. The function that calculates Gini coefficients from a vector of numbers is called `Gini`, and we apply it to the income deciles from R walk-through 5.3 (`decs_c80`, `decs_c14`, `decs_us80`, and `decs_us14`).
+
+```{r}
+# Load the ineq library
+library(ineq)
+
+# The decile mean incomes from R walk-through 5.3 are used.
+g_c80 <- Gini(decs_c80)
+g_c14 <- Gini(decs_c14)
+g_us80 <- Gini(decs_us80)
+g_us14 <- Gini(decs_us14)
+paste("Gini coefficients")
+```
+
+```
+## [1] "Gini coefficients"
+```
+
+```{r}
+paste("China - 1980: ", round(g_c80, 2), 
+  ", 2014: ", round(g_c14, 2))
+```
+
+```
+## [1] "China - 1980: 0.29 , 2014: 0.51"
+```
+
+```{r}
+paste("United States - 1980: ", round(g_us80, 2), 
+  ", 2014: ", round(g_us14, 2))
+```
+
+```
+## [1] "United States - 1980: 0.34 , 2014: 0.4"
+```
+
+Now we make the same line chart (simply copy and paste the code from R walk-through 5.3, but use the `text` function to label curves with their respective Gini coefficients. The two numbers in the `text` function specify the coordinates (horizontal and vertical) where the text should be written (experiment for yourself to find the best place to put the labels), and we used the `round` function to show the first three digits of the calculated Gini coefficients.
+
+```{r}
+plot(cum_inc_share_c80, type = "l", col = "blue", lty = 2, 
+  lwd = 2, xlab = "Deciles", 
+  ylab = "Cumulative income share")   
+
+# Add the perfect equality line
+abline(a = 0, b = 0.1, col = "black", lwd = 2)
+
+# lty = 1 = dashed line
+lines(cum_inc_share_c14, col = "green", lty = 1, lwd = 2)
+
+# lty = 2 = solid line
+lines(cum_inc_share_us80, col = "red", lty = 2, lwd = 2)
+
+lines(cum_inc_share_us14, col = "orange", lty = 1, lwd = 2)
+
+title("Lorenz curves, China and the US (1980 and 2014)")
+
+legend("topleft", lty = 2:1, lwd = 2, cex = 1.2, legend = 
+  c("China, 1980", "China, 2014", 
+    "US, 1980", "US, 2014"),
+  col = c("blue", "green", "red", "orange"))
+
+text(8.5, 0.78, round(g_c80, digits = 3))
+text(9.4, 0.6, round(g_c14, digits = 3))
+text(5.7, 0.38, round(g_us80, digits = 3))
+text(6.4, 0.3, round(g_us14, digits = 3))
+```
+
+The Gini coefficients for both countries have increased, confirming what we already saw from the Lorenz curves that in both countries the income distribution has become more unequal. 
+
+[End of walk-through]
+
+
+### Extension R walk-through 5.5 Calculating Gini coefficients for all countries and all years using a loop
+
+In this extension walk-through, we show you how to calculate the Gini coefficient for all countries and years in your dataset.
+
+This sounds like a tedious task, and indeed if we were to use the same method as before it would be mind-numbing. However, we have a powerful programming language at hand, and this is the time to use it.
+
+Here we use a very useful programming tool you may not have come across yet: loops. Loops are used to repeat a specified block of code. There are a few types of loop, and here we will use a ‘for’ loop, meaning that we ask R to apply the same code to each number or item in a specific list (i.e. repeat the code 'for' a list of numbers/items). Let’s start with a very simple case: printing the first 10 square numbers. In coding terms, we are printing the values for `i^2` for the numbers `i=1, ..., 10`. 
+
+```{r}
+for (i in seq(1, 10)){
+  print(i^2)
+}
+```
+
+In the above command, `seq(1, 10)` creates a vector of numbers from 1 to 10 (1, 2, 3, ..., 10). The command `for (i in seq(1, 10))` defines the variable `i` initially as 1, then performs all the commands that are between the curly brackets for each value of `i` (typically these commands will involve the variable `i`). Here our command prints the value of `i^2` for each value of `i`. Check that you understand the syntax above by modifying it to print only the first 5 square numbers, or adding 2 to the numbers from 1 to 10 (instead of squaring these numbers). 
+
+Now we use loops to complete our task. We begin by creating a new variable in our dataset, `gini`, which we initially set to 0 for all country-year combinations.
+
+```{r}
+decile_data$gini <- 0
+```
+
+Now we use a loop to run through all the rows in our dataset (country-year combinations). For each row we will repeat the Gini coefficient calculation from R walk-through 5.4 and save the resulting value in the `gini` variable we created. 
+
+```{r}
+# Give us the number of rows in decile_data
+noc <- nrow(decile_data)
+
+for (i in seq(1, noc)){
+  # Go to Row I to get the decile data
+  decs_i <- unlist(decile_data[i, 3:12])
+  decile_data$gini[i] <- Gini(decs_i)
+}
+```
+
+With this code, we calculated 4,799 Gini coefficients without having to manually run the same command 4,799 times. We now look at some summary measures for the `gini` variable. 
+
+```{r}
+summary(decile_data$gini)
+```
+
+The average Gini coefficient is 0.46, the maximum is 0.74, and the minimum 0.18. Let's look at these extreme cases.
+
+First we will look at the extremely equal income distributions (those with a Gini coefficient smaller than 0.20): 
+
+```{r}
+temp <- subset(
+  decile_data, decile_data$gini < 0.20, 
+  select = c("Country", "Year", "gini"))
+temp
+```
+
+These correspond to eastern European countries before the fall of communism.
+
+Now the most unequal countries (those with a Gini coefficient larger than 0.73): 
+
+```{r}
+temp <- subset(
+  decile_data, decile_data$gini > 0.73, 
+  select = c("Country", "Year", "gini"))
+temp
+```
+
+[End of walk-through]
+
+
+### Extension R walk-through 5.6 Plotting time series of Gini coefficients, using ggplot
+
+In this extension walk-through, we show you how to make time series plots (time on the horizontal axis, the variable of interest on the vertical axis) with Gini coefficients for a list of countries of your choice.
+
+There are many ways to plot data in R, one being the standard plotting function (`plot`) we used in previous walk-throughs. Another (and perhaps more beautiful) way is to use the `ggplot` function, which is part of the `tidyverse` package we loaded earlier. Our dataset is already in a format which the `ggplot` function can easily use (the ‘long’ format, where each row corresponds to a different country-year combination). 
+
+First we use the `subset` function to select a small list of countries and save their data as `temp_data`. As an example, we have chosen four anglophone countries: the UK, the US, Ireland, and Australia. 
+
+```{r}
+temp_data <- subset(
+  decile_data, Country %in% c("United Kingdom", 
+    "United States", "Ireland", "Australia"))
+```
+
+Now we plot the data using `ggplot`.
+
+```{r}
+ggplot(temp_data, 
+  aes(x = Year, y = gini, color = Country)) +
+  geom_line(size = 1) +
+  theme_bw() +
+  ylab("Gini") +
+  # Add a title
+  ggtitle("Gini coefficients for anglophone countries")
+```
+
+We asked the `ggplot` function to use the `temp_data` dataframe, with `Year` on the horizontal axis (`x = `) and `gini` on the vertical axis (`y = `). The `color` option indicates which variable we use to separate the data (use a different line for each unique item in `Country`). The first line of code sets up the chart, and the `+ geom_line(size = 1)` then instructs R to draw lines. (See what happens if you replace `+ geom_line(size = 1)` with `+ geom_point(size = 1)`.)
+
+`ggplot` assumes that the different lines you want to show are identified through the different values in one variable (here, the `Country` variable). If your data is formatted differently, for example, if you have one variable for the Gini of each country (‘wide’ format), then in order to use `ggplot` you will first have to transform the dataset into ‘long’ format. Doing so is beyond the scope of this task, however you can find a worked example online, such as 'R TSplots' (https://tinyco.re/5093147).[^1] Project 4 also explains how to transform data between ‘wide’ and ‘long’ formats. 
+
+[^1]: University of Manchester’s Econometric Computing Learning Resource (ECLR). 2018. ‘R TSplots’. Updated 26 July 2016.
+
+The `ggplot` package is extremely powerful, and if you want to produce a variety of different charts, you may want to read more about that package, for example, see a Harvard R tutorial (https://tinyco.re/8185055) or an R statistics tutorial (https://tinyco.re/9652072) for great examples that include code.
+
+[End of walk-through]
+
+
+## Part 5.2 Measuring other kinds of inequality
+
+### R walk-through 5.7 Importing `.csv` files into R
+
+Before importing, make sure the .csv file is saved in your working directory. After importing (using the `read.csv` function), use the `str` function to check that the data was imported correctly.
+
+```{r}
+# Open the csv file from the working directory
+health_in <- read.csv("
+  inequality-of-life-as-measured-by-mortality-gini-coefficient-1742-2002.csv")
+str(health_in)
+```
+
+The variable `Entity` is the country and the variable `X.percent` is the health Gini. Let’s change these variable names (to `Country` and `Health`, respectively) to clarify what they actually refer to, which will help when writing code (and if we go back to read this code at a later date). 
+
+```{r}
+# Country is the first variable.
+names(health_in)[1] <- "Country"
+# Health Gini is the fourth variable.
+names(health_in)[4] <- "HGini"
+```
+
+There is another quirk in the data that you may not have noticed in this initial data inspection: All countries have a short code (`Code`), except for England and Wales (currently blank `""` in the dataframe). As `Code` is a factor variable, we use the `levels` function to change the blanks to `"ENW"`. 
+
+```{r}
+levels(health_in$Code)[levels(health_in$Code) == ""] <- 
+  "ENW"
+```
+
+### Tip 
+
+The way this code works may seem a little mysterious, and you may find it difficult to remember the code for this step. However, an Internet search for ‘R renaming one factor level’ (recall that `Code` is a factor variable) will show you many ways to achieve this (including the one shown above). Often you will find answers on stackoverflow.com, where experienced coders provide useful help. 
+
+[End of walk-through]
+
+
+### R walk-through 5.8 Creating line graphs with `ggplot`
+
+As shown in R walk-through 5.7, the data is already formatted so that we can use `ggplot` directly (in ‘long’ format), in other words we have only one variable for the mortality Gini (`HGini`), and we can separate the data by country using one variable (`Country`). 
+
+Most of the code below is similar to our use of `ggplot` in previous walk-throughs, though this time we added the option `labs` to change the vertical axis label (`y = `) and the option `scale_color_brewer` to change the colour palette (to clearly differentiate the lines for each country). 
+
+```{r}
+# Select all data after 1951
+temp_data <- subset(health_in, Year > 1951)
+
+ggplot(temp_data, 
+  aes(x = Year, y = HGini, color = Country)) +
+  geom_line(size = 1) +
+  labs(y = "Mortality inequality Gini coefficient") +
+  # Change the colour palette
+  scale_color_brewer(palette = "Paired") +
+  theme_bw() +
+  # Add a title
+  ggtitle("Mortality inequalities")
+```
+
+[End of walk-through]
+
+
+### R walk-through 5.9 Drawing a column chart with sorted values
+
+#### Plot a column chart for 1952
+
+First we use `subset` to extract the data for 1952 only, and store it in a temporary dataset (`tempdata`). 
+
+```{r}
+# Select all data for 1952
+temp_data <- subset(health_in, Year == 1952)
+
+# Reorder rows in temp_data by the values of HGini
+temp_data <- temp_data[order(temp_data$HGini), ]
+temp_data
+```
+
+The rows are now ordered according to `HGini`, in ascending order. Let's use `ggplot` again.
+
+```{r}
+ggplot(temp_data, aes(x = Code, y = HGini)) +
+  geom_bar(stat = "identity", width = .5, 
+    fill = "tomato3") +
+  theme_bw() +
+  labs(title = "Mortality Gini coefficients (1952)",
+    caption = 
+      "source: ourworldindata.org/health-inequality",
+    y = "Mortality inequality Gini coefficient")
+```
+
+Unfortunately, the columns are not ordered correctly, because when the horizontal axis variable (here, `Code`) is a factor, then `ggplot` uses the ordering of the factor levels, which we can see by using the `levels` function: 
+
+```{r}
+levels(temp_data$Code)
+```
+
+A blog post (http://tinyco.re/1992106) from *Data Se* provides the following code for ‘R geom_bar change order’, and uses the `reorder` function to reorder the horizontal axis variable (`Code`) according to the `HGini` value.
+
+```{r}
+ggplot(temp_data, 
+  aes(x = reorder(Code, HGini), y = HGini)) +
+  geom_bar(stat = "identity", width = .5, 
+    fill = "tomato3") +
+  coord_cartesian(ylim = c(0, 0.45)) +
+  theme_bw() +
+  labs(title = "Mortality Gini coefficients (1952)", 
+    x = "Country", 
+    caption = 
+      "source: ourworldindata.org/health-inequality",
+    y = "Mortality inequality Gini coefficient")
+```
+
+#### Plot a column chart for 2002
+
+We want to compare this ranking with the ranking of 2002. First we extract the relevant data again.
+
+```{r}  
+# Select all data for 2002 
+temp_data <- subset(health_in, Year == 2002)
+
+ggplot(temp_data, 
+  aes(x = reorder(Code, HGini), y = HGini)) +  
+  geom_bar(stat = "identity", width = .5, 
+    ylim = c(0, 0.45), fill = "tomato3") +  
+  # Adjust vertical axis scale for comparability with 1952
+  coord_cartesian(ylim = c(0, 0.45)) +
+  theme_bw() +  
+  labs(title = "Mortality Gini coefficients (2002)", 
+    x = "Country",  
+    caption = 
+      "source: ourworldindata.org/health-inequality",
+    y = "Mortality inequality Gini coefficient")   
+```
+
+It is fairly easy to plot the data for both years in the same chart, by extracting both years into the same temporary dataset.
+
+```{r}
+# Select all data for 1952 and 2002
+temp_data <- subset(health_in, Year %in% c("1952", "2002"))
+temp_data$Year <- factor(temp_data$Year)
+
+ggplot(temp_data, 
+  aes(x = reorder(Code, HGini), y = HGini, fill = Year)) +
+  geom_bar(position="dodge", stat = "identity") +
+  theme_bw() +
+  labs(
+    title = "Mortality Gini coefficients (1952 and 2002)", 
+    x = "Country",
+    caption = 
+      "source: ourworldindata.org/health-inequality",
+    y = "Mortality inequality Gini coefficient")
+```
+ 
+Now the country ordering is in terms of the average HGini, rather than HGini in 1952 (which might have made comparisons easier).
+
+[End of walk-through]
+
+
+### R walk-through 5.10 Drawing a column chart with sorted values
+
+For this walk-through, we downloaded the 'access to essential medicines' data, as explained above. Here we saved it as `WHO access to essential medicines.csv`. Looking at the spreadsheet in Excel, you can see that the actual data starts in row three, meaning there are two header rows. So let's `skip` the first row when uploading it.
+
+```{r}
+med_access <- read.csv(
+  "WHO access to essential medicines.csv", skip = 1)
+str(med_access)
+```
+
+Using the `str` function to inspect the dataset, you can see that the second and third variables have lost their labels during the import. From the spreadsheet you know that they are:
+
+-   median availability of selected generic medicines (%) – Private
+-   median availability of selected generic medicines (%) – Public.
+
+Let’s change the names of these variables (to `Private_Access` and `Public_Access` respectively) to make working with them easier: 
+
+```{r}
+names(med_access)[2] <- "Private_Access"
+names(med_access)[3] <- "Public_Access"
+```
+
+To find details about these variables, click the ‘Metadata’ button on the website to find the following explanation (under ‘Method of measurement’): 
+
+A standard methodology has been developed by WHO and Health Action International (HAI). Data on the availability of a specific list of medicines are collected in at least four geographic or administrative areas in a sample of medicine dispensing points. Availability is reported as the percentage of medicine outlets where a medicine was found on the day of the survey.
+
+Before we produce charts of the data, we shall look at some summary measures of the access variable (`med_access`).
+
+```{r}
+summary(med_access)
+```
+
+On average, private sector patients have better access to essential medication.
+
+From the summary statistics for the `Public_Access` variable, you can see that there are two missing observations (`NA`). Here, we will keep these observations because leaving them in doesn’t affect the following analysis. 
+
+```{r}
+med_access <- med_access[complete.cases(med_access), ]
+```
+
+There are a number of interesting aspects to look at. We shall produce a bar chart comparing the private and public access in countries, ordered according to values of private access (largest to smallest). First, we need to reformat the data into ‘long’ format (so there is a single variable containing all the values we want to plot), then use the `ggplot` function to make the chart.
+
+```{r}
+# Reorder by values of private access (largest to smallest)
+med_access$Country <- reorder(
+  med_access$Country, med_access$Private_Access) 
+
+# This is required for the melt function.
+library(reshape2)
+# Rearrange the data for ggplot
+med_access_melt <- melt(med_access)
+
+# This creates a dataframe with three columns
+# Country = Country name
+# value = % access (Private_Access or Public_Access).
+# variable = indicates Public_Access or Private_Access. 
+
+ggplot(med_access_melt, 
+  aes(x = Country, y = value, fill = variable)) +
+  geom_bar(position = "dodge", stat = "identity") +
+  scale_fill_discrete(name = "Access",
+    labels = c("Private sector", "Public sector")) +
+  theme(axis.text.x = element_text(angle = 90, 
+    hjust = 1, vjust = 0.5)) +
+  theme_bw() +
+  labs(title = "Access to essential medication", 
+    x = "Country", y = "Percent of patients with access to 
+      essential medication") +
+  # Flip axis to make country labels readable
+  coord_flip()
+```
+
+Let’s find the extreme values, starting with the two countries where public sector patients have access to all (100%) essential medications (which you can also see in the chart). 
+
+```{r}
+med_access[med_access$Public_Access == 100, ]
+```
+
+Let's see which countries provide 0% access to essential medication for people in the public sector.
+
+```{r}
+med_access[med_access$Public_Access == 0, ]
+```
+
+[End of walk-through]
+
+
+### R walk-through 5.11 Using line and bar charts to illustrate changes in time
+
+#### Import data and plot a line chart
+
+First we import the data into R and check its structure.
+
+```{r}
+# Open the csv file from the working directory
+data_prim <- read.csv(
+  "OWID-gender-gap-in-primary-education.csv")
+str(data_prim)
+```
+
+The data is now in the dataframe `data_prim`. The variable of interest (`percentage of female enrolment`) has a very long name so we will shorten it to `PFE`.
+
+```{r}
+names(data_prim)[4] <- "PFE"
+```
+
+As usual, ensure that you understand the definition of the variables you are using. In the Our World in Data website, look at the ‘Sources’ tab underneath the graph for a definition:
+
+Percentage of female enrollment is calculated by dividing the total number of female students at a given level of education by the total enrolment at the same level, and multiplying by 100.
+
+This definition implies that if the primary-school-age population was 50% male and 50% female and all children were enrolled in school, the percentage of female enrolment would be 50.
+
+Before choosing ten countries, we check which countries (`Entity`) are in the dataset using the `unique` function. Here we also use the `head()` function to only show the first few countries.
+
+```{r}
+head(unique(data_prim$Entity))
+```
+
+You can find nearly all the countries in the world in this list (plus some sub- and supra-country entities, like OECD countries, which explains why the variable wasn't initially called ‘Country’).
+
+#### Plot a line chart for a selection of countries
+
+We now make a selection of ten countries. (You can of course make a different selection, but ensure that you get the spelling right as R is unforgiving!).
+
+```{r}
+temp_data <- subset(data_prim, Entity %in% c(
+  "Albania", "China", "France", "India", "Japan", 
+  "Switzerland", "United Arab Emirates", 
+  "United Kingdom", "Zambia", "United States"))
+```
+
+Now we plot the data, similar to what we did earlier.
+
+```{r}
+ggplot(temp_data, aes(x = Year, y = PFE, color = Entity)) +
+  # size = 1 sets the line thickness.
+  geom_line(size = 1) +
+  # Remove grey background
+  theme_bw() +   
+  # Change the set of colours used
+  scale_colour_brewer(palette = "Paired") + 
+  scale_colour_discrete(name = "Country") +
+  # Set the vertical axis label
+  ylab("Percentage (%)") +
+  # Add a title
+  ggtitle("Female pupils as a percentage of 
+    total enrolment in primary education") 
+```
+
+#### Plot a column chart with sorted values
+
+To calculate the change in the value of this measure between 1980 and 2010 for each country chosen, we have to manipulate the data so that we have one entry (row) for each entity (or country), but two different variables for the percentage of female enrolment `PFE` (one for each year).
+
+```{r}
+# Select all data for 1980
+temp_data_80 <- subset(temp_data, Year == "1980")
+# Rename variable to include year
+names(temp_data_80)[4] <- "PFE_80"
+# Select all data for 2010
+temp_data_10 <- subset(temp_data, Year == "2010") 
+# Rename variable to include year
+names(temp_data_10)[4] <- "PFE_10"
+temp_data2 <- merge(
+  temp_data_80, temp_data_10, by = c("Entity"))
+```
+
+Have a look at `temp_data2`, which now contains two variables for every country, `PFE_80` and `PFE_10`. It also has multiple variables for Year (`Year.x` and `Year.y`) and Code (`Code.x` and `Code.y`), but that is a minor issue and you could delete one of them.
+
+Now we can calculate the difference.
+
+```{r}
+temp_data2$dPFE <- temp_data2$PFE_10 - temp_data2$PFE_80
+```
+
+You could plot a separate chart for each year and check the order, but here we show how to create one chart with the data from both years.
+
+```{r}
+ggplot(temp_data2, aes(
+  x = reorder(Code.x, dPFE), y = dPFE)) +
+  geom_bar(stat = "identity", fill = "tomato3") +
+  labs(title = "Change (%) in female pupils’ share of 
+    total enrolment in primary education",
+    x = "Country", y = "Percentage change (%)",
+    caption = "source: https://ourworldindata.org/educational-mobility-inequality") +
+  theme_bw()
+```
+ 
+
+It is apparent that some countries saw very little or no change (the countries that already had very high PFE). The countries with initially low female participation have significantly improved.
+
+[End of walk-through]
