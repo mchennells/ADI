@@ -18,6 +18,9 @@ here()
 rm(list=ls())
 
 list.files(here("data", "ADI_all-domains"))
+
+
+
 list.files(here("data", "ADI_all-domains", "ADI_2021"))
 
 path_claimant_counts_2021 <- here("data", "ADI_all-domains", "ADI_2021", "ADI_claimant_counts_2021.csv")

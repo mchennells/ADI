@@ -1,4 +1,6 @@
 # ADI
 Annual Deprivation Index - data exploration
 
-Checking if this works here ...
+Exploration of recently released ADI dataset from Autonomy
+
+
