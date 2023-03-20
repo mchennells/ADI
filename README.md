@@ -1,5 +1,5 @@
-# ADI
-Annual Deprivation Index - data exploration
+# Annual Deprivation Index
+ADi data exploration
 
 Starting to explore the recently released ADI dataset from Autonomy UK
 
