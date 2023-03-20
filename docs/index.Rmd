@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(include = FALSE)
+knitr::opts_chunk$set(echo = TRUE)
 
 
 suppressPackageStartupMessages({
@@ -282,16 +282,6 @@ f_cases_bin_facet <- ggplot(
 f_cases_bin_facet
 
 
-# -----------
-f_lc
-f_lc_cat
-f_gini_year
-f_gini_year_cat
-f_cases_year
-f_cases_bins
-f_cases_stack
-f_cases_bin_facet
-
 ## What about just general rates over time? Should be similar to graph, just moderated by population changes too
 
 # =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -535,7 +525,7 @@ d_prog_AREA_ranks_lag |> filter(year == "2021") |> count(rank_change)
 d_prog_AREA_ranks_lag |> filter(year == "2021") |> count(rank_decile_change)
 
 
-View(d_prog_AREA_ranks_lag |> filter(year == "2021", rank_decile_change %in% c(1,-1)))
+# View(d_prog_AREA_ranks_lag |> filter(year == "2021", rank_decile_change %in% c(1,-1)))
 
 area_id_rank_change <- d_prog_AREA_ranks_lag |> filter(year == "2021", rank_decile_change %in% c(1,-1))
   area_id_rank_change
@@ -648,29 +638,101 @@ f_decile_change_worst
 
 # print figures
 
-f_area_rate_by_year_ranks
-f_area_rate_change
 
-f_decile_change
-f_decile_change_worst
 
 # legend.justification in theme?
 
 
 ```
 
-Testing whether this works
-
-```{r data_read, echo = TRUE}
-
-f_decile_change
-
-```
+Annual Deprivation Index (ADI) is a summation of (1) job claims, (2) crime statistics and (3) mental health cases. Combined with data on population per area, this allows us to calculate a rate (ADI cases/person) for each LSOA or Area. As pointed out by the publishers, there are many advantages to having a cardinal scale; the purpose of this doc is to briefly explore these.
 
 ## And then this?
+One advantage of having ADI rates / area is that we can compare rates across areas. There are many ways to do this. While the IMD involves a relative measure of rank, it carries no information on distribution of impacts. So the first thing we can do is compare rates (so still a relative measure) but look at rate inequality across LSOAs.
 
-```{r decile, echo = TRUE}
+The following is a Lorenz curve of ADI rates. It shows cumulative ADI cases (per LSOA, weighted by LSOA population) by cumulative population (ranked by ADI rate, with highest rates to the right hand side), broken into 10 equal population-sized deciles. The 45 degree line represents perfect equality, such that, for example, 20% of the population have 20% of all ADI cases. A curve lying below this reflects the fact that some deciles have more cases than others. 
 
+We can see that there is large inequality in ADI cases. For example, the 60% least affected members of the population experience between 30-40% of all cases. This looks relatively consistent across years.
+
+```{r , echo = FALSE}
+f_lc
+```
+
+It's useful to see what the major contributor to ADI inequality is. We can eyeball this by looking at inequality among different ADI components. For example, the figure below shows, using 2021 data, inequality in total ADI cases and by ADI component. The biggest inequality is in job claims (curve furthest away from the equality line), followed by crime. It looks like there is not a great (or as great) an inequality in mental health cases.
+
+```{r , echo = FALSE}
+f_lc_cat
+```
+
+The first graph gave a general idea of inequality in ADI cases, but didn't specifically calculate inequality or make clear any trend in inequality ove time. The following figure shows the Gini coefficient of ADI cases over time. 
+
+The Gini coefficient is a measure of inequality obtained by subtracting the area under the Lorenz curve from the area under the line of equality. Larger Gini coefficients indicate a smaller area under the Lorenz curve (it shifts further away from the line of equality), and so greater inequality.
+
+The figure below shows the change in the Gini coefficient of ADI cases over the data period 2013-2021. It shows that ADI case inequality actually decreased over time, though has increased in the past year. This is good news!
+
+```{r , echo = FALSE}
+f_gini_year
+```
+
+We can again break ADI total down into its component parts, as in the figure below. The reduction in inequality looks due to reductions in claims and crime inequality, though the relatively large 2016 increase and then subsequent decrease in health inequality is worth mentioning.
+
+```{r , echo = FALSE}
+f_gini_year_cat
+```
+
+The problem with the analysis above is that inequality decreases only tell us half the story. While reductions over time are good -- they show that there is a slow decrease in ADI inequality -- it ignores changes in overall levels of ADI cases over time. 
+
+The graph below shows clearly that while inequality may have reduced over time, total cases have risen sharply; all groups have seen significant increases in cases (note: to assume rates increase, we must assume that population is relatively constant; I analyse rates shortly). 
+
+The graph also shows that these increases are driven largely by increases in job claims, while crime cases have remained relatively constant. Mental health cases are much lower contributor to ADI cases overall, but notice that they started at a low base and have almost doubled in the past decade.
+
+```{r , echo = FALSE}
+f_cases_year
+```
+
+Adding in the proportion of all cases by category in the figure below confirms that job claims are the biggest contributor to increases in total ADI cases over time.
+
+```{r , echo = FALSE}
+f_cases_stack
+```
+
+The figure below shows total cases broken down by LSOA ADI-rate decile (LSOAs ranked by ADI rate, then broken into equal-sized population groups). The top two (of ten) most deprived deciles have a much larger ADI case load than the other deciles; the most deprived has more than double the number of cases than every other decile barring the next most deprived.
+
+```{r , echo = FALSE}
+f_cases_bins
+```
+
+Putting this in terms of rates makes the comparison even sharper.
+
+It also looks like rates haven't changed much in the past two years, but as we'll see below, there are large differences between the most and least deprived groups -- and a widening of inequality.
+
+```{r , echo = FALSE}
+f_area_rate_by_year_ranks
+```
+
+And breaking into the various deciles makes the point visually striking; it's particularly the most deprived that have seen the highest change in especially job claims in the past few years.
+
+```{r , echo = FALSE}
+f_cases_bin_facet
+```
+
+If we look only at the most recent two years of data, we can see that the increase in rates for the two most deprived groups is far higher than the modest changes (and even improvements) in rates for all other groups. This shows a sharp divergence in ADI impacts and a clear widening of inequality.
+
+```{r , echo = FALSE}
+f_area_rate_change
+```
+
+We can look at those Areas that moved down a decile in ranking. There are 40 of them, and this worsening takes place across the deciles (i.e., not only in the most deprived deciles). The ADI rate bands are shown for clarity.
+
+```{r worst_40, echo = FALSE}
 f_decile_change
+```
 
+We can identify specific areas that have worsened much more than others. This is useful, as we can then dive into potential reasons why these areas have seen such a sharp change relative to their peers -- and use this information to address social change in something more like real-time than using e.g. only the IMD every few years.
+
+The figue below shows the 5 Areas with the largest increase in ADI rates.
+
+
+```{r worst_5, echo = FALSE}
+f_decile_change_worst
 ```

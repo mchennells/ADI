@@ -26,11 +26,11 @@ d_full <- read_csv(here("output", "d_full.csv"),
 
 # as.factor(year, pop_bins)
 
-# =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-
 mainColor <- "#2876af"
 yearColor <- "#69b3a2"
 lcColor <- "#b31307"
+
+# =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 
 # ==========  Gini  ==========
@@ -58,7 +58,7 @@ f_lc <- ggplot(
   theme(
     axis.title.y = element_text(color = mainColor, size = 20),
     axis.title.x = element_text(color = yearColor, size = 20),
-    legend.position = c(0.8, 0.2) 
+    legend.position = c(0.9, 0.25) 
   ) +
   ggtitle("Lorenz curve of ADI cases, over time")
 f_lc
