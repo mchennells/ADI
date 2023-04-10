@@ -1412,8 +1412,9 @@ f_theil
 
 # Conclusion
 
--   ADI could provide a useful addition to social research and modelling
-    of local attitudes that infrequent and ordinal-only IMD does not
+-   ADI could provide a useful, publicly-available addition to social
+    research and modelling of local attitudes that infrequent and
+    ordinal-only IMD does not
 
 -   Sub-categories of ADI matter and should be accounted for: vary in
     both magnitude and volatility over time
