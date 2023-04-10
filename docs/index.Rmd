@@ -1,8 +1,13 @@
 ---
-title: "ADI exploration example"
+title: "Exploring the Annual Deprivation Index @ Focaldata"
 author: "Matt Chennells"
-date: "2023-03-20"
-output: html_document
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  markdown:
+    wrap: 72
 ---
 
 ```{r setup, include=FALSE}
@@ -13,9 +18,13 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(here)
   library(ggplot2)
+  library(gt)
+  library(plotly)
+  library(janitor)
   library(microbenchmark)
   library(hrbrthemes)
   library(ineq)
+  library(openxlsx)
 })
 
 here()
@@ -24,108 +33,883 @@ here()
 
 rm(list=ls())
 
-d_dec <- read_csv(here("output", "d_deciles.csv"), 
-                  col_types = c(year = "f", pop_bins = "f"))
-
-d_full <- read_csv(here("output", "d_full.csv"),
+d_LSOA <- read_csv(here("output", "d_ADI_LSOA.csv"), 
                    col_types = c(year = "f"))
-  
+
+d_DIST <- read_csv(here("output", "d_ADI_DISTRICT.csv"),
+                   col_types = c(year = "f"))
+
+d_DIST_l <- read_csv(here("output", "d_ADI_DISTRICT_long.csv"),
+                     col_types = c(year = "f"))
+
+d_UK_ptile <- read.xlsx(here("data", "wiidcountry_2.xlsx"),
+                        sheet = "UK",
+                        colNames = TRUE)
+
+d_UK_quint <- read.xlsx(here("data", "hdiifye2022correction.xlsx"),
+                       sheet = "Table 2",
+                       startRow = 6, 
+                       colNames = TRUE) |> slice(1 : (n()-2))
+
+d_UK_gini <- read.xlsx(here("data", "hdiifye2022correction.xlsx"),
+                       sheet = "Table 9",
+                       startRow = 7, 
+                       cols = c(1:4),
+                       colNames = TRUE) |> slice(1 : (n()-2)) |> clean_names()
+
+d_UK_gini_recent <-   read_csv(here("data", "Figure_1_Gini_20_to_22.csv")) |> 
+  clean_names() |>
+  mutate(across(-year, ~ .x / 100))
 
 # as.factor(year, pop_bins)
 
 mainColor <- "#2876af"
 yearColor <- "#69b3a2"
 lcColor <- "#b31307"
+```
 
-# =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+<br>
 
+Deprivation: "a state of exclusion from the ordinary customs and
+activities of society."
 
-# ==========  Gini  ==========
+The [Annual Deprivation
+Index](https://www.annualdeprivationindex.co.uk/) (ADI) is an up to date
+data source on core deprivation metrics in the cities, towns and regions
+of England.
 
-d_dec_lc <- d_dec |> 
-  select(year, pop_bins, lc_p, starts_with("lc_L")) |>
-  rename(lc_L_ADI = lc_L) |>
-  pivot_longer(cols = c(-year, -pop_bins,-lc_p), names_to = "Type", values_to = "Lc", names_prefix = "lc_L_")
+Recently published on **3 March 2023** by the organisation
+[Autonomy](https://autonomy.work/) in conjunction with academics.
+Working paper for data release can be found
+[here](https://uploads-ssl.webflow.com/63eb883740a1925406fd3445/640866b123b04a126ebf742e_annual_deprivation_index%20(3).pdf).
 
-d_dec_lc |> count(Type)
+<br>
 
-## ----- Plot Lorenz curve
+------------------------------------------------------------------------
 
-# Lc: ADI by year
-f_lc <- ggplot(
-  data = d_dec_lc |> filter(Type == "ADI"), 
-  aes(y = Lc, x = lc_p, group = year, color = year))  +
-  geom_line() +
-  geom_point() +
-  geom_abline(intercept = 0, slope = 1, col = lcColor, lwd = 1) +
-  scale_y_continuous(name = "cumulative normalised ADI cases", breaks = seq(0, 1, 0.1)) +
-  scale_x_continuous(name = "cumulative normalised rank of ADI cases", breaks = seq(0, 1, 0.1)) +
-  coord_cartesian(ylim = c(0,1), xlim = c(0,1)) +
+The ADI is constructed using granular, high-frequency indicators in 3
+domains (see tables below):
+
+-   mental health (sub-domains of NHS quality outcomes framework)
+
+-   employment (job claimant count data)
+
+-   crime (various sub-domains, inc. burglary, vehicle crime, violent
+    crime, etc.)
+
+<br>
+
+The ADI is a **summation of these factors** which, when combined with
+data on population per area, allows us to calculate a rate (ADI
+cases/person) for each LSOA or District (many LSOAS to one District).
+
+It's a **cardinal scale**, so the level of measurement is numeric and
+not only a ranking (ordinal), like the Index of Multiple Deprivation
+(IMD)
+
+<br>
+
+```{r heads, echo=FALSE, message=FALSE, warning=FALSE, paged.print=TRUE}
+head(d_LSOA) |> gt() |>   
+  fmt_number(
+    columns = starts_with("rate_"),
+    ) |>
+  fmt_number(
+    columns = c(pop, starts_with("cases")),
+    decimals = 0
+  )
+head(d_DIST) |> gt() |>
+  fmt_number(
+  columns = starts_with("rate_"),
+  ) |>
+fmt_number(
+  columns = c(pop, starts_with("cases")),
+  decimals = 0
+  )
+
+```
+
+<br>
+
+[ADI vs IMD:]{.underline}
+
+-   Like IMD, it contains **granular data** at Lower Super Output Area
+    (LSOA) levels
+
+-   **Monitor indicators more frequently** to gain more real-time
+    insights; i.e., annually vs IMD which is calculated approx. every 5
+    years
+
+-   Because ADI is **cardinal**, we can measure change in **absolute
+    levels of deprivation** over time
+
+-   We can also measure levels of and changes in **inequality**
+
+<br>
+
+------------------------------------------------------------------------
+
+Here, I'm **exploring inequality in the ADI** and seeing whether it's
+useful for insights at "hyper-local" level (and e.g., useful in MRP).
+
+There are **almost 33,000 LSOAs, grouped into 326 Districts**.
+
+**caveat**: ADI uses statistical (geographic, produced by the ONS) and
+not administrative (political ward) boundaries, and I haven't yet mapped
+LSOAs to wards, which change over time -- so no voting insights yet.
+
+All source data from ADI website, but ADI construction and analysis is
+my own (and so my own errors and imputations when data was missing!).
+
+<br>
+
+The figure below shows **ADI rate average and distribution over time**.
+There are two broad features that stand out which I'll dive into:
+
+-   Significant decrease and then increase over time
+
+-   Initial squashing and then dispersion of distribution
+
+```{r ADI rate district, echo=FALSE, message=FALSE, warning=FALSE}
+
+# ====================  plot district changes over two periods ==========
+
+# hard to look directly at specific LSOA's (indicated by 4-digit code), as some are missing years of data and might be larger variation
+# rather, look at districts and then dive into those experiencing more decline
+
+d_district <- d_DIST
+
+# Looking at individual district progress over time, ideas: 
+# > look at position changes, either by rank or pop bin change each year
+# > likelihood of moving up or down
+
+## ----------- average district-level ADI rate over time
+  
+fun_type <- "mean"
+
+f_rate_by_year_dist <- 
+  ggplot(
+    data = d_district,
+    aes(x = year, y = rate_ADI)
+  ) +
+  geom_violin() +
+  stat_summary(
+    geom = "point", 
+    fun = fun_type, 
+    color = mainColor, size = 2
+  ) +
+  stat_summary(
+    group = 1,
+    geom = "line", 
+    fun = fun_type, 
+    color = mainColor, size = 1, linetype = 3
+  ) +
+  coord_cartesian(ylim = c(0, 2)) +
+  scale_y_continuous(name = "average ADI rate") +
+  scale_x_discrete(name = "year") +
   theme_ipsum() +
+  theme(
+    axis.title.y = element_text(color = mainColor, size = 20),
+    axis.title.x = element_text(color = yearColor, size = 20),
+    legend.position = "right",
+    panel.grid.major.x = element_blank()
+  ) +
+  ggtitle("distribution of ADI rate, by year")
+# f_rate_by_year_dist
+ggplotly(f_rate_by_year_dist)
+```
+
+## ADI cases over time
+
+Take a look at number of ADI cases over time, overall and by
+sub-category.
+
+*First*, where the various sub-categories were initially converging, the
+bulk of ADI cases in the last few years are made up of job claims
+(stacked graph shows proportion contributions).
+
+*Second*, we can see the enormous impact of COVID, primarily on job
+claims rather than the other sub-categories. Job claims data shows the
+largest variation as well.
+
+*Third*, though starting from a low base, there's been an almost
+doubling of mental health cases in the past decade.
+
+*Fourth*, cases of crime have remained mostly the same over time.
+
+The variation in and differences between sub-category contributions
+suggests that granular data on each could be a useful inclusion in
+predictive analysis, e.g., MRP.
+
+```{r ADI absolute cases, echo=FALSE, message=FALSE, warning=FALSE, fig.show='hold', out.width="50%"}
+
+# ----------  ADI Gini preparation
+n_bins <- 100
+
+d_gini_LSOA <- d_LSOA |> 
+  arrange(year) |>
+  group_by(year) |>
+  arrange(desc(rate_ADI_LSOA)) |>   # 
+  mutate(
+      
+    # x-axis: rank LSOAs by ADI rate (i.e., LSOAs are normalised by person), get cumulative number and proportion of population
+    pop_TOTAL = sum(pop, na.rm = TRUE),
+    pop_LSOA_cumsum = cumsum(pop),
+    pop_LSOA_cumprop = pop_LSOA_cumsum / pop_TOTAL,
+    
+    # percentiles for each of interpretation (but less accuracy) and Gini calculation (requires equally weighted bins)
+    pop_bins = cut_interval(pop_LSOA_cumsum, n = n_bins, labels = FALSE),   # Break into bins
+    pop_bins_p = pop_bins / n_bins,
+    ## OR: cut(pop_cumsum, breaks = 100, labels = FALSE)
+    
+    cases_ADI_TOTAL = sum(cases_ADI_LSOA, na.rm = TRUE),
+    cases_ADI_prop = cases_ADI_LSOA / cases_ADI_TOTAL,
+    cases_ADI_cumprop = cumsum(cases_ADI_prop)
+  ) |> 
+  ungroup()
+
+# ----------  bins
+
+d_gini_bins <- d_gini_LSOA |>
+  group_by(year, pop_bins, pop_bins_p) |>
+  summarise(
+    pop_bins_sum = sum(pop, na.rm = TRUE),
+    cases_ADI_bins = sum(cases_ADI_LSOA, na.rm = TRUE),
+    cases_claims_bins = sum(cases_claims, na.rm = TRUE),
+    cases_crime_bins = sum(cases_crime, na.rm = TRUE),
+    cases_health_bins = sum(cases_health, na.rm = TRUE)
+  ) |>
+  ungroup() |>
+  group_by(year) |>
+  mutate(   # cumulative sum of cases by bins, for plotting Lc
+    cases_ADI_bins_cumsum = cumsum(cases_ADI_bins),
+    cases_ADI_bins_cumsum_norm = cases_ADI_bins_cumsum / max(cases_ADI_bins_cumsum),
+    
+    cases_claims_bins_cumsum = cumsum(cases_claims_bins),
+    cases_claims_bins_cumsum_norm = cases_claims_bins_cumsum / max(cases_claims_bins_cumsum),
+    
+    cases_crime_bins_cumsum = cumsum(cases_crime_bins),
+    cases_crime_bins_cumsum_norm = cases_crime_bins_cumsum / max(cases_crime_bins_cumsum),
+    
+    cases_health_bins_cumsum = cumsum(cases_health_bins),
+    cases_health_bins_cumsum_norm = cases_health_bins_cumsum / max(cases_health_bins_cumsum),
+  ) |>
+  ungroup()
+
+
+# ----------  absolute values
+
+d_year_totals <- d_gini_bins |>
+  # filter(cases_group != 0) |>
+  group_by(year) |>
+  summarise(
+    ADI = max(cases_ADI_bins_cumsum),
+    # ADI_sum = sum(cases_ADI_bins, na.rm = TRUE),    # should give same answer
+    Claims = max(cases_claims_bins_cumsum),
+    Crime = max(cases_crime_bins_cumsum),
+    Health = max(cases_health_bins_cumsum)
+  ) |>
+  mutate(across(-year, ~ .x /1000000))
+
+  # d_year_totals_check <- d_year_totals |> mutate(cases_check = (Claims + Crime + Health ) - ADI)
+
+###
+d_year_totals_pivot <- d_year_totals |> 
+  pivot_longer(cols = -year, names_to = "Type", values_to = "N")
+
+# ADI total and by category, over time
+f_cases_year <- ggplot(
+  data = d_year_totals_pivot |> filter(Type == "ADI"), 
+  aes(y = N, x = year, group = 1)) +
+  geom_line(size = 2, color = mainColor) +
+  geom_line(data = d_year_totals_pivot |> filter(Type != "ADI"),    # Can use d_abs_pivot to include ADI as well
+            aes(y = N, x = year, group = Type, color = Type), 
+            linetype = 3, size = 2) +
+  scale_y_continuous(name = "cases, in millions") +
+  scale_x_discrete(name = "year") +
+  coord_cartesian(ylim = c(0, 40)) +
+  theme_ipsum() +
+  theme(
+    axis.title.y = element_text(color = mainColor, size = 20),
+    axis.title.x = element_text(color = yearColor, size = 20),
+    legend.position = c(0.12,0.8) 
+  ) +
+  ggtitle("ADI total cases by year, and by category")
+f_cases_year
+
+# Proportions shown in stacked graph
+f_cases_stack <- ggplot(
+  data = d_year_totals_pivot |> filter(Type != "ADI"),  
+  aes(y = N, x = year, fill = Type)) +
+  geom_area(
+    aes(x = as.numeric(year)),
+    alpha = 0.4
+  ) +
+  geom_line(aes(group = Type, color = Type), linetype = 3, size = 2) +
+  # geom_line(data = d_year_totals_pivot |> filter(Type == "ADI"),
+  #           aes(x = year, group = 1, fill = NULL, color = NULL), color = mainColor, size = 2) +
+  scale_x_discrete(name = "year") +
+  scale_y_continuous(name = "cases, in millions") +
+  coord_cartesian(ylim = c(0, 40)) +
+  theme_ipsum() +
+  theme(
+    axis.title.y = element_blank(),
+    axis.title.x = element_text(color = yearColor, size = 20),
+    legend.position = c(0.12,0.8) 
+  ) +
+  ggtitle("ADI total cases by year, and by category (shaded = proportion)")
+#geom_line( color = mainColor), size = 2)
+# https://r-graph-gallery.com/stacked-area-graph.html (see also for plotly and dygaph interactive code)
+f_cases_stack
+```
+
+## ADI rate by decile
+
+Having looked at overall numbers, we can explore inequality in ADI
+rates. One approach is to separate LSOAs into groups with different
+deprivation levels.
+
+I've ranked all LSOAs by ADI rate (not ADI cases!) from highest rate to
+lowest rate and then split them into ten equal-sized population groups
+(keeping in mind that LSOA populations vary). This gives us deciles
+ranging from **1: most deprived to 10: least deprived** (as is the
+custom order).
+
+<br>
+
+The figure below plots the average ADI rate for each decile. Notice
+several things:
+
+-   Wide gaps between the worst-off deciles and the rest.
+
+-   Only small differences between the 5 best-off deciles, but gaps have
+    recently appeared between them.
+
+-   One impact of COVID is the recent dispersion of ADI rates---splaying
+    out of sorts.
+
+```{r ADI deciles, echo=FALSE, message=FALSE, warning=FALSE}
+# create deciles using previous bins
+d_gini_deciles_base <- d_gini_bins |>
+  arrange(year, pop_bins) |>
+  group_by(year) |>
+  mutate(
+    pop_deciles = as.factor(cut_interval(pop_bins, n = 10, labels = FALSE)),
+  ) |> 
+  ungroup()
+
+  # print(d_gini_deciles |> count(year, pop_deciles), n = 200)
+
+d_gini_deciles <- d_gini_deciles_base |>
+  group_by(year, pop_deciles) |>
+  summarise(
+    pop_decile = sum(pop_bins_sum),
+    
+    cases_ADI_decile = sum(cases_ADI_bins, na.rm = TRUE), # deciles are equal sized, so no need to weight according to pop size
+    rate_ADI_decile = cases_ADI_decile / pop_decile,
+
+    cases_claims_decile = sum(cases_claims_bins, na.rm = TRUE),
+    rate_claims_decile = cases_claims_decile / pop_decile,
+
+    cases_crime_decile = sum(cases_crime_bins, na.rm = TRUE),
+    rate_crime_decile = cases_crime_decile / pop_decile,
+
+    cases_health_decile = sum(cases_health_bins, na.rm = TRUE),
+    rate_health_decile = cases_health_decile / pop_decile
+  )
+
+## ----------  plot rates by decile over time
+
+f_area_rate_by_year <- ggplot(
+  data = d_gini_deciles,
+  aes(y = rate_ADI_decile, x = year, group = pop_deciles, color = pop_deciles)
+  ) +
+  geom_line(size = 2) +
+  scale_y_continuous(name = "ADI cases/person") +
+  scale_x_discrete(name = "years") +
+  coord_cartesian(ylim = c(0, 2)) +
+  theme_ipsum() +
+  labs(color = "ADI rate decile\n(1=most deprived)") +
+  theme(
+    axis.title.y = element_text(color = mainColor, size = 20),
+    axis.title.x = element_text(color = yearColor, size = 20),
+    legend.position = "right"
+  ) +
+  ggtitle("ADI rate by LSOA decile rank, by year")
+f_area_rate_by_year
+```
+
+Something else we can see is that while the **direction** of rate
+changes was initially similar across deciles, they are now are at odds:
+the most deprived getting worse off while least deprived showing
+improvements.
+
+The two graphs below show more clearly
+
+1.  the **magnitude differences** of ADI rate changes and
+
+2.  how important it is to take the the **starting level** into account.
+
+```{r ADI decile change, echo=FALSE, message=FALSE, warning=FALSE, fig.show='hold', out.width="50%"}
+
+# rate changes by band
+year_input_1 <- "2020"
+year_input_2 <- "2021"
+
+# d_prog_AREA_band_sum_change <- d_prog_AREA_band_sum |>
+#   filter(year %in% c(year_1, year_2)) |>
+#   pivot_wider(names_from = year, values_from = decile_rate_mean, names_prefix = "rate_") |>
+#   mutate(rate_change = rate_2021 - rate_2020)
+
+# rate change by decile
+
+d_gini_deciles_change <- d_gini_deciles |>
+  filter(year == year_input_1 | year == year_input_2) |>
+  select(year, pop_deciles, starts_with("rate_")) |>
+  rename_with(cols = everything(), ~ str_remove_all(.x, "rate_|_decile")) |> 
+  arrange(pops, year) |>
+  group_by(pops) |>
+  mutate(
+    change_ADI = ADI - lag(ADI), 
+    change_claims = ADI - lag(claims), 
+    change_crime = ADI - lag(crime), 
+    change_health = ADI - lag(health), 
+    
+    change_color = as.factor(ifelse(change_ADI >= 0, "pos", "neg"))
+  ) |>
+  ungroup()
+
+d_gini_deciles_change_base <- d_gini_deciles_change |>
+  select(pops, change_color, starts_with("change_")) |>
+  filter(!is.na(change_ADI))
+  
+# graph rate changes by decile
+f_rate_change_base <- 
+  ggplot(
+    data = d_gini_deciles_change_base, 
+    aes(x = pops, y = change_ADI, group = change_color, color = change_color)
+  ) +
+  geom_point(size = 3) +
+  geom_segment(aes(xend = pops, y = 0, yend = change_ADI), size = 1.5) +
+  # geom_errorbar() +
+  geom_hline(yintercept = 0, size = 0.25, color = "grey") +
+  coord_cartesian(ylim = c(-0.05, 0.15)) +
+  scale_y_continuous(name = "change in ADI rate") +
+  scale_x_discrete(name = "LSOA ADI rate decile rank (1=most deprived)") +
+  scale_color_manual(values=c(lcColor, yearColor)) + 
+  theme_ipsum() +
+  theme(
+    axis.title.y = element_text(color = mainColor, size = 20),
+    axis.title.x = element_text(color = yearColor, size = 20),
+    legend.position = "none"
+  ) +
+  ggtitle(paste0("change in ADI rate between ", year_input_1," and ", year_input_2))
+f_rate_change_base
+
+# graph rate changes by decile, from previous year level
+d_gini_deciles_change_orig <- d_gini_deciles_change |>
+  select(pops, year, change_color, ADI, change_ADI) |>
+  arrange(pops, year) |>
+  group_by(pops) |>
+  mutate(
+    ADI_1 = lag(ADI), 
+    ADI_2 = ADI
+  ) |>
+  ungroup() |>
+  filter(!is.na(change_ADI)) |> 
+  select(-year)
+
+f_rate_change_orig <- 
+  ggplot(
+    data = d_gini_deciles_change_orig, 
+    aes(x = pops, y = ADI_1, group = change_color, color = change_color)
+  ) +
+  geom_point(size = 1.5) +
+  geom_point(aes(y=ADI_2), size = 1.5) +
+  geom_segment(
+    aes(xend = pops, y = ADI_1, yend = ADI_2), size = 1.5,
+  ) +
+  geom_segment(
+    aes(xend = pops, y = ADI_1, yend = ADI_2),
+    arrow = arrow(length = unit(0.015, "npc")), 
+    position = position_nudge(x = -0.3)
+    ) +
+  # geom_errorbar() +
+  # geom_hline(yintercept = 0, size = 0.25, color = "grey") +
+  # coord_cartesian(ylim = c(-0.05, 0.15)) +
+  scale_y_continuous(name = "change in ADI rate") +
+  scale_x_discrete(name = "LSOA ADI rate decile rank (1=most deprived)") +
+  scale_color_manual(values=c(lcColor, yearColor)) + 
+  theme_ipsum() +
+  theme(
+    axis.title.y = element_text(color = mainColor, size = 20),
+    axis.title.x = element_text(color = yearColor, size = 20),
+    legend.position = "none"
+  ) +
+  ggtitle(paste0("change in ADI rate between ", year_input_1," and ", year_input_2))
+f_rate_change_orig
+```
+
+# Focusing on inequality
+
+Established that there
+
+-   is significant variation in the ADI over time,
+
+-   are important differences in changes by sub-category, and
+
+-   recently, ADI rates have risen for the most deprived while they've
+    decreased for the most well-off
+
+One direction to explore further is to more **directly measure
+inequalit**y in the ADI.
+
+### Measuring UK income inequality
+
+Some background of how inequality is usually measured might be useful.
+
+There are different ways we can measure inequality. Most often
+researchers **use data on people's income** (we could use wages, total
+assets, etc.) and compare the different ends of the distribution.
+
+The figure below **shows median income levels by income quintile**
+(i.e., after ranking all individuals from lowest to highest income and
+partitioning them into five equal-sized groups).
+
+We can eyeball the differences between groups and get broad insights:
+e.g., median income of the top quintile is over **4x higher** than the
+bottom.
+
+```{r median income, echo=FALSE, message=FALSE, warning=FALSE}
+
+d_UK_quint_long <- d_UK_quint |>
+  filter(Year == "2021/22") |>
+  mutate(
+    across(-Year, ~ as.numeric(.x) / 1000)
+    ) |>
+  pivot_longer(cols = -Year, names_to = "quintile", values_to = "median_income") |>
+  select(-Year)
+
+d_UK_quint_long$quintile <- fct_relevel(d_UK_quint_long$quintile, "Bottom", "2nd", "3rd", "4th", "Top")
+
+f_UK_median <- ggplot(
+  data = d_UK_quint_long |> filter(quintile != "All.Individuals"),
+  aes(x = quintile, y = median_income, group = 1)
+) +
+  geom_point() +
+  geom_line() +
+  geom_hline(
+    yintercept = (d_UK_quint_long |> filter(quintile == "All.Individuals"))$median_income, 
+    col = lcColor, size = 1, linetype = "dotted"
+    ) +
+  theme_ipsum() +
+  scale_y_continuous(name = "median income (£000s)", breaks = seq(0, 100, 10)) +
+  coord_cartesian(ylim = c(0, 80)) +
+  theme(
+    axis.title.y = element_text(color = mainColor, size = 20),
+    axis.title.x = element_text(color = yearColor, size = 20),
+  ) +
+  ggtitle("UK median income by income quartile, 2021/22")
+f_UK_median
+```
+
+##### Data source: Table 2: Timeseries of median equivalised disposable household income of individuals by income quintile, 1977-2021/22, UK (2021/22 prices), in [ONS: The effects of taxes and benefits of household income](https://www.ons.gov.uk/peoplepopulationandcommunity/personalandhouseholdfinances/incomeandwealth/datasets/householddisposableincomeandinequality).
+
+<br>
+
+A popular alternative is to draw a **Lorenz curve** and calculate a
+**Gini coefficient** from the underlying data.
+
+The **Lorenz curve plots the cumulative proportion of total income by
+the cumulative proportion of the population**, with the latter ranked
+from lowest to highest (often grouped, here into percentiles).
+
+The figure usually includes a [**diagonal line of perfect
+equality**]{style="color:#b31307"}, representing the case where each
+population group earns their equivalent proportion of total income.
+
+Reading along the **curve tells us the proportion of income that is
+earned by the poorest X% of the population**. Hovering over the graph
+below (which is based on 2019 UK income data), the poorest half (50%) of
+the population earn around 27% of all income.
+
+```{r UK Lorenz curve, echo=FALSE, message=FALSE, warning=FALSE}
+d_UK_ptile_long <- d_UK_ptile |>
+  select(starts_with("p"), -population, -palma) |>
+  pivot_longer(cols = everything(), names_to = "pctile", values_to = "pctile_income_share", 
+               names_prefix = "p", names_transform = list(pctile = as.numeric)) |>
+  arrange(pctile) |>
+  mutate(
+    cum_income_share = cumsum(pctile_income_share)
+  )
+
+f_UK_pctile <- ggplot(
+  data = d_UK_ptile_long,
+  aes(x = pctile, y = cum_income_share, group = 1)
+  ) +
+  geom_point() +
+  geom_line() +
+  geom_abline(intercept = 0, slope = 1, col = lcColor, lwd = 1) +
+  theme_ipsum() +
+  scale_y_continuous(name = "cumulative share of income", breaks = seq(0, 100, 10)) +
+  scale_x_continuous(name = "cumulative proportion of population", breaks = seq(0, 100, 10)) +
+  coord_cartesian(ylim = c(0, 100), xlim = c(0,100)) +
+  theme(
+    axis.title.y = element_text(color = mainColor, size = 20),
+    axis.title.x = element_text(color = yearColor, size = 20),
+  ) +
+  ggtitle("UK income Lorenz curve, 2019 data")
+# f_UK_pctile
+# source: https://www.wider.unu.edu/database/world-income-inequality-database-wiid
+
+ggplotly(f_UK_pctile)
+```
+
+##### Data source: 2019 United Kingdom income data, in "The WIID Companion" at [UN World Income Inequality Database](https://www.wider.unu.edu/database/world-income-inequality-database-wiid) (30 June 2022)
+
+<br>
+
+The **Gini coefficient is a measure of inequality** based on this data.
+It roughly measures the percentage difference between the area under the
+line of perfect equality and the area under the Lorenz curve.
+
+The **intuition** is that the further 'away' the Lorenz curve is from
+the line of perfect equality---so, the smaller the area under the
+curve---the more unequal the distribution is and the greater the
+difference will be ... i.e. the 'flatter-then-steeper' the curve, the
+lower the proportion of total income received by the poorest groups.
+
+**A higher Gini coefficient thus indicates greater income inequality.**
+
+Though widely used, there are several cons with using the curve, e.g.,
+plotting multiple Lorenz curves on the same figure can make changes or
+differences between groups hard to interpret.
+
+<br>
+
+Still, it's **useful to measure changes in inequality over time**, as in
+the figure below. We can see income inequality rising from the 80s until
+around the time of the financial crisis, and then slowly falling.
+
+The figure also broadly hints at the role of public transfers in
+reducing inequality, with a slight widening in the difference between
+disposable and gross (after transfers) income.
+
+```{r UK Gini, echo=FALSE, message=FALSE, warning=FALSE}
+d_UK_gini_long <- d_UK_gini |>
+  mutate(across(-year, ~ as.numeric(.x))) |>
+  pivot_longer(cols = -year, names_to = "income_type", values_to = "gini") |>
+  mutate(
+    gini = gini / 100,
+    year_b = str_sub(year, start = 1, end = 2),
+    year_e = str_sub(year, start = -2, end = -1),
+    year = as.numeric(paste0(year_b, year_e)), 
+    year = ifelse(year == "1900", "2000", year)
+    ) |> 
+  arrange(year) |> select(-year_b, -year_e)
+
+f_UK_gini <- ggplot(
+    data = d_UK_gini_long, 
+    aes(x = year, y = gini, group = income_type, color = income_type)
+  ) +
+  geom_line() +
+  theme_ipsum() +
+  scale_y_continuous(name = "Gini coefficient", breaks = seq(0, 1, 0.1)) +
+  scale_x_discrete(name = "year", breaks = seq(0, 3000, 10)) +
+  scale_color_discrete(name = "Income type") +
+  coord_cartesian(ylim = c(0.1, 0.6)) +
+  theme(
+    axis.title.y = element_text(color = mainColor, size = 20),
+    axis.title.x = element_text(color = yearColor, size = 20),
+    # legend.position = c(0.9, 0.2),
+    panel.grid.minor.x = element_blank()) +
+  guides(color = guide_legend(reverse = TRUE)) +
+  ggtitle(label = "Gini coefficient for UK income")
+
+# source: https://www.ons.gov.uk/peoplepopulationandcommunity/personalandhouseholdfinances/incomeandwealth/datasets/householddisposableincomeandinequality
+f_UK_gini
+```
+
+##### Data source: Table 9: Table 9: Gini coefficients for the distribution of income at each stage of the tax and benefit system, 1977-2021/22, UK, in [ONS: The effects of taxes and benefits of household income](https://www.ons.gov.uk/peoplepopulationandcommunity/personalandhouseholdfinances/incomeandwealth/datasets/householddisposableincomeandinequality)
+
+<br>
+
+We must be careful though, as the Gini coefficient alone **may not be
+very sensitive**. The figure below shows the Gini coefficient on
+disposable income from the past three years, with 95% confidence
+intervals representing uncertainty in estimates of mean and median
+income. There's a significant overlap, so conclusions about changes must
+be tempered!
+
+```{r UK Gini recent, echo=FALSE, message=FALSE, warning=FALSE}
+
+f_UK_gini_recent <- ggplot(
+  data = d_UK_gini_recent, 
+  aes(x = year, y = gini_disposable_income)
+) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = lower_bound, ymax = upper_bound), width = 0.5) +
+  theme_ipsum() +
+  scale_y_continuous(name = "Gini coefficient", breaks = seq(0, 1, 0.01)) +
+  coord_cartesian(ylim = c(0.32, 0.38)) +
   theme(
     axis.title.y = element_text(color = mainColor, size = 20),
     axis.title.x = element_text(color = yearColor, size = 20),
     legend.position = c(0.9, 0.25) 
   ) +
-  ggtitle("Lorenz curve of ADI cases, over time")
-f_lc
+  ggtitle("Gini coefficient in UK for disposable income")
+# source: Figure 1 @ https://www.ons.gov.uk/peoplepopulationandcommunity/personalandhouseholdfinances/incomeandwealth/bulletins/householdincomeinequalityfinancial/financialyearending2022
+f_UK_gini_recent
 
-# But can have similar Gini coefficient but due to either poor getting better off or rich getting worse off
+```
 
+##### Data source: Figure 1: **Gini coefficient for disposable income and 95% confidence intervals around the central estimate, UK, FYE 2020 to 2022, at** [ONS UK household income inequality](https://www.ons.gov.uk/peoplepopulationandcommunity/personalandhouseholdfinances/incomeandwealth/bulletins/householdincomeinequalityfinancial/financialyearending2022)
+
+### Measuring inequality in the ADI
+
+As we did for income, we can **calculate and plot a Lorenz curve for ADI
+cases across LSOAs**. There's an important difference, though.
+
+As shown in the decile calculations earlier, **deprivation measures
+typically rank from most to least deprived**, rather than least to most
+as with income. So less well-off areas will have *higher ADI rates and
+more cases* than those better-off, and each additional area adds fewer
+cases than the previous---meaning the *slope* of the curve is
+diminishing rather than increasing.
+
+But the figure can still be read in the same way. We see, for example,
+that the 20% worst-off areas make up almost 39% of all ADI cases, and
+that the most deprived half (50%) make up almost 72% of ADI cases.
+
+```{r ADI Lorenz curve, echo=FALSE, message=FALSE, warning=FALSE}
+
+## ----- Plot Lorenz curve
+
+d_gini_bins_long <- d_gini_bins |>
+    select(year, pop_bins_p, cases_ADI_bins_cumsum_norm, cases_claims_bins_cumsum_norm, cases_crime_bins_cumsum_norm, cases_health_bins_cumsum_norm) |>
+    rename_with(cols = everything(), ~ str_remove(.x, "_bins_cumsum_norm")) |>
+    pivot_longer(cols = starts_with("cases_"), names_to = "Type", values_to = "Lc", names_prefix = "cases_")
+
+range_years <- unique(d_gini_bins_long$year)   #>> select range of years
+  # range_years
+  
 # Lc: ADI by category, most recent year
-most_recent_year <- "2021"
-d_dec_lc_mry <- d_dec_lc |> filter(year == most_recent_year)
+most_recent_year <- c("2021")   # >> year select
 
-f_lc_cat <- ggplot(
-  data = d_dec_lc_mry |> filter(Type == "ADI"), 
-  aes(y = Lc, x = lc_p, group = 1))  +
+# add zero row
+new_row <- tibble(year = "2021", pop_bins_p = 0, Type = "ADI", Lc = 0.00)
+# new_row <- data.frame(lapply(d_gini_bins_long, function(x) 0))
+d_gini_bins_long_recent <- rbind( 
+  new_row, 
+  d_gini_bins_long |> filter(year %in% most_recent_year)
+) |> select(-year)
+
+f_lc_recent <- ggplot(
+  data = d_gini_bins_long_recent |> filter(Type == "ADI"), 
+  aes(y = Lc, x = pop_bins_p, group = 1))  +
   geom_line(color = mainColor) +
   geom_point(color = mainColor) +
-  geom_line(data = d_dec_lc_mry |> filter(Type != "ADI"), 
+  geom_abline(intercept = 0, slope = 1, col = lcColor, lwd = 1) +
+  scale_y_continuous(name = "cum. prop. of ADI cases", breaks = seq(0, 1, 0.1)) +
+  scale_x_continuous(name = "cum. prop. of population", breaks = seq(0, 1, 0.1)) +
+  coord_cartesian(ylim = c(0,1), xlim = c(0,1)) +
+  theme_ipsum() +
+  theme(
+    axis.title.y = element_text(color = mainColor, size = 20),
+    axis.title.x = element_text(color = yearColor, size = 20), 
+    panel.grid.minor.x = element_blank(),
+    panel.grid.minor.y = element_blank()
+  ) +
+  ggtitle(paste0("Lorenz curve of ADI cases in ", most_recent_year))
+# f_lc_recent
+ggplotly(f_lc_recent)
+
+```
+
+We can take the 2021 data and calculate the Gini coefficient for each
+sub-category separately. Inequality in job claims shows the greatest
+deviation from perfect equality, followed by crime cases. There is
+remarkably low inequality in mental health cases across all LSOAs!
+
+```{r ADI Lorenz curve - by category and year, echo=FALSE, message=FALSE, warning=FALSE}
+
+f_lc_recent_cat <- ggplot(
+  data = d_gini_bins_long_recent |> filter(Type == "ADI"), 
+  aes(y = Lc, x = pop_bins_p, group = 1))  +
+  geom_line(color = mainColor) +
+  geom_point(color = mainColor) +
+  geom_line(data = d_gini_bins_long_recent |> filter(Type != "ADI"),
             aes(group = Type, color = Type), 
             linetype = 3, size = 2) +
   geom_abline(intercept = 0, slope = 1, col = lcColor, lwd = 1) +
-  scale_y_continuous(name = "cumulative normalised ADI cases", breaks = seq(0, 1, 0.1)) +
-  scale_x_continuous(name = "cumulative normalised rank of ADI cases", breaks = seq(0, 1, 0.1)) +
+  scale_y_continuous(name = "cum. prop. of ADI cases", breaks = seq(0, 1, 0.1)) +
+  scale_x_continuous(name = "cum. prop. of population", breaks = seq(0, 1, 0.1)) +
   coord_cartesian(ylim = c(0,1), xlim = c(0,1)) +
   theme_ipsum() +
   theme(
     axis.title.y = element_text(color = mainColor, size = 20),
     axis.title.x = element_text(color = yearColor, size = 20),
-    legend.position = c(0.8, 0.2) 
   ) +
   ggtitle(paste0("Lorenz curve of ADI cases in ", most_recent_year, ", by category"))
-f_lc_cat
+f_lc_recent_cat
+# \\ health inequality is low; note that it's ranked by ADI rate (rather than health rate)
 
-# \\ health inequality is low; gini is driven by claims (and then crime) inequality
+# # Lc: ADI by year
+# f_lc_all <- ggplot(
+#   data = d_gini_bins_long |> 
+#     filter(
+#       Type == "ADI",
+#       year %in% range_years
+#     ), 
+#   aes(y = Lc, x = pop_bins_p, group = year, color = year))  +
+#   geom_line() +
+#   geom_point() +
+#   geom_abline(intercept = 0, slope = 1, col = lcColor, lwd = 1) +
+#   scale_y_continuous(name = "cum. prop. of ADI cases", breaks = seq(0, 1, 0.1)) +
+#   scale_x_continuous(name = "cum. prop. of population", breaks = seq(0, 1, 0.1)) # #   )) +
+#   coord_cartesian(ylim = c(0,1), xlim = c(0,1)) +
+#   theme_ipsum() +
+#   theme(
+#     axis.title.y = element_text(color = mainColor, size = 20),
+#     axis.title.x = element_text(color = yearColor, size = 20),
+#     legend.position = c(0.9, 0.25) 
+#   ) +
+#   ggtitle("Lorenz curve of ADI cases, by year")
+# f_lc_all
 
-# ----- compute Gini coefficient
-year_list_gini <- unique(d_dec$year)
-year_list_gini
+```
 
-d_dec_gini <- tibble()
+##### Note: LSOAs were ranked according to overall ADI, from which position each sub-category's Lorenz curve was calculated. Hence the slight overlap with the line of equality for the health curve. This won't affect Gini coefficient calculations.
 
-for (y in year_list_gini) {
-  
-  gini_ADI <- ineq::Gini( (d_dec |> filter(year == y))$cases_group[-1] )
-  gini_claims <- ineq::Gini( (d_dec |> filter(year == y))$cases_group_claims[-1] )
-  gini_crime <- ineq::Gini( (d_dec |> filter(year == y))$cases_group_crime[-1] )
-  gini_health <- ineq::Gini( (d_dec |> filter(year == y))$cases_group_health[-1] )
-  
-  z_gini <- tibble(
-    year = y, gini_ADI = gini_ADI, gini_claims = gini_claims, gini_crime = gini_crime, gini_health = gini_health
-  )
-  
-  d_dec_gini <- bind_rows(d_dec_gini, z_gini)
-  
-}
+<br>
 
-d_dec_gini_long <- d_dec_gini |>
+And we can calculate the Gini coefficient over time as well, for overall
+ADI and each sub-category. We see that inequality in mental health has
+always been low (in our data) and inequality in job claims the
+highest---though the latter has recently converged with inequality in
+crime cases.
+
+```{r ADI gini over time, echo=FALSE, message=FALSE, warning=FALSE}
+
+# ----------  Gini coefficient (by year) calculations
+d_gini_bins_summary <-
+  d_gini_bins |>
+  arrange(year, pop_bins) |>
+  group_by(year) |>
+  summarise(
+    gini_ADI = ineq::Gini(cases_ADI_bins),   # so this is per person within LSOA, but it doesn't weigh how different LSOAs are wrt to total contribution to all rates, which I think must happen
+    gini_claims = ineq::Gini(cases_claims_bins),
+    gini_crime = ineq::Gini(cases_crime_bins),
+    gini_health = ineq::Gini(cases_health_bins)
+  ) |>
+  ungroup()
+
+d_gini_bins_summary_long <- d_gini_bins_summary |>
   pivot_longer(cols = c(-year), names_to = "Type", values_to = "gini", names_prefix = "gini_")
 
-## Gini coefficient over time
+# ----------  plot Gini coefficient over time
 f_gini_year <- ggplot(
-  data = d_dec_gini_long |> filter(Type == "ADI"), 
+  data = d_gini_bins_summary_long |> filter(Type == "ADI"), 
   aes(y = gini, x = year, group = 1)) +
   geom_line(size = 2, color = mainColor) +
   coord_cartesian(ylim = c(0,0.6)) +
@@ -136,16 +920,14 @@ f_gini_year <- ggplot(
     axis.title.x = element_text(color = yearColor, size = 20)
   ) +
   ggtitle("Gini coefficient of ADI cases, by year")
-f_gini_year
+# f_gini_year
 
-# >> add labels: % change each year; overall % change
-
-## Gini coefficient over time, by category too
+## ... and by category
 f_gini_year_cat <- ggplot(
-  data = d_dec_gini_long |> filter(Type == "ADI"), 
+  data = d_gini_bins_summary_long |> filter(Type == "ADI"), 
   aes(y = gini, x = year, group = 1)) +
   geom_line(size = 2, color = mainColor) +
-  geom_line(data = d_dec_gini_long |> filter(Type != "ADI"), 
+  geom_line(data = d_gini_bins_summary_long |> filter(Type != "ADI"), 
             aes(group = Type, color = Type), 
             linetype = 3, size = 2) +
   coord_cartesian(ylim = c(0,0.6)) +
@@ -153,586 +935,490 @@ f_gini_year_cat <- ggplot(
   theme_ipsum() +
   theme(
     axis.title.y = element_text(color = mainColor, size = 20),
-    axis.title.x = element_text(color = yearColor, size = 20), 
-    legend.position = c(0.9, 0.8)
+    axis.title.x = element_text(color = yearColor, size = 20)
   ) +
   ggtitle("Gini coefficient of ADI cases by category, by year")
+# >>> can add graph selection option to look at difference between selected points
 f_gini_year_cat
+```
 
+Plotting ADI alongside income inequality in the figure below, we can see
+that they track each other reasonably well but diverge more recently.
 
-# ----- add absolute values to the coefficient graph
+This suggests that the ADI measure has some **construct validity**
+(truly measures what we care about)---see the working paper for its
+relation to IMD measures.
 
-d_dec_check <- d_dec |> mutate(cases_check = (cases_group_claims + cases_group_crime + cases_group_health ) - cases_group)
-# Tiniest discrepancy due to rounding
+It also suggests that the ADI offers some **additional variation** that
+could provide new insight that we didn't have before from measuring e.g.
+income alone.
 
-d_abs <- d_dec |>
-  filter(cases_group != 0) |>
-  group_by(year) |>
-  summarise(
-    ADI = sum(cases_group),
-    Claims = sum(cases_group_claims),
-    Crime = sum(cases_group_crime),
-    Health = sum(cases_group_health)
-  ) |>
-  mutate(across(-year, ~ .x /1000000))
+```{r gini ADI vs income, echo=FALSE, message=FALSE, warning=FALSE}
 
-d_abs_check <- d_abs |> mutate(cases_check = (Claims + Crime + Health ) - ADI)
+g_adi <- d_gini_bins_summary_long |> filter(Type == "ADI")
 
+g_inc <- d_UK_gini_long |> mutate(year = as.numeric(year)) |> 
+  filter(year >= 2013, income_type == "disposable") |> 
+  rename(Type = income_type) |> slice(1:(n()-1)) |>
+  mutate(Type = ifelse(Type == "disposable", "Income", Type))
 
-###
-d_abs_pivot <- d_abs |> pivot_longer(cols = -year, names_to = "Type", values_to = "N")
-d_abs_ADI <- d_abs |> mutate(ADI = Claims + Crime + Health) |> select(year, ADI)
-d_abs_CAT <- d_abs |> select(-ADI) |> pivot_longer(cols = -year, names_to = "Type", values_to = "N")
+d_gini_joint <- rbind(g_adi, g_inc) |> arrange(year)
 
-# ADI total and by category, over time
-f_cases_year <- ggplot(
-  data = d_abs_ADI, 
-  aes(y = ADI, x = year, group = 1)) +
-  geom_line(size = 2, color = mainColor) +
-  geom_line(data = d_abs_CAT,    # Can use d_abs_pivot to include ADI as well
-            aes(y = N, x = year, group = Type, color = Type), 
-            linetype = 3, size = 2) +
-  scale_y_continuous(name = "cases, in millions") +
-  scale_x_discrete(name = "year") +
-  coord_cartesian(ylim = c(0, 50)) +
-  theme_ipsum() +
-  theme(
-    axis.title.y = element_text(color = mainColor, size = 20),
-    axis.title.x = element_text(color = yearColor, size = 20),
-    legend.position = c(0.1,0.8) 
-  ) +
-  ggtitle("ADI total cases by year, and by category")
-f_cases_year
-
-
-# Proportions shown in stacked graph
-f_cases_stack <- ggplot(
-  data = d_abs_ADI,  aes(y = ADI, x = as.numeric(year)), group = 1) +
-  geom_line(color = mainColor, size = 2) +
-  geom_area(
-    data = d_abs_CAT,
-    aes(y = N, x = as.numeric(year), fill = Type),
-    alpha = 0.4
-  ) +
-  geom_line(data = d_abs_CAT,  aes(y = N, x = as.numeric(year), group = Type, color = Type), linetype = 3, size = 2) +
-  scale_x_continuous(name = "year", breaks = seq(2013, 2021, 1)) +
-  scale_y_continuous(name = "cases, in millions") +
-  coord_cartesian(ylim = c(0, 50)) +
-  theme_ipsum() +
-  theme(
-    axis.title.y = element_text(color = mainColor, size = 20),
-    axis.title.x = element_text(color = yearColor, size = 20),
-    legend.position = c(0.1,0.8) 
-  ) +
-  ggtitle("ADI total cases by year, and by category (shaded = proportion)")
-#geom_line( color = mainColor), size = 2)
-f_cases_stack
-
-# https://r-graph-gallery.com/stacked-area-graph.html (see also for plotly and dygaph interactive code)
-
-# ----------- By deciles
-
-d_bins <- d_dec |> filter(cases_group != 0) |> 
-  mutate(across(starts_with("cases_"), ~ .x / 1000000))
-
-# ADI total and by category, over time
-f_cases_bins <- ggplot(
-  data = d_bins, 
-  aes(y = cases_group, x = year, group = pop_bins, color = pop_bins)) +
+f_gini_joint <- ggplot(
+  data = d_gini_joint, 
+  aes(y = gini, x = year, group = Type, color = Type)) +
   geom_line(size = 2) +
-  # geom_line(data = d_abs_CAT,    # Can use d_abs_pivot to include ADI as well
-  #           aes(y = N, x = year, group = Type, color = Type), 
-  #           linetype = 3, size = 2)
-  scale_y_continuous(name = "cases, in millions") +
-  scale_x_discrete(name = "year") +
-  labs(color = "ADI decile (1=most deprived)") +
-  coord_cartesian(ylim = c(0, 10)) +
+  coord_cartesian(ylim = c(0.2,0.4)) +
+  scale_y_continuous(name = "Gini coefficient") +
   theme_ipsum() +
-  theme(
-    axis.title.y = element_text(color = mainColor, size = 20),
-    axis.title.x = element_text(color = yearColor, size = 20),
-    legend.position = c(0.4,0.7)
-  ) +
-  ggtitle("ADI total cases by ADI decile, by year")
-f_cases_bins
-
-# focus on most vulnerable group
-
-d_bins_facet <- d_bins |> 
-  select(starts_with("cases_"), year, pop_bins, -cases_group) |>
-  pivot_longer(cols = c(-year, -pop_bins), names_to = "Type", values_to = "N", names_prefix = "cases_") |>
-  mutate(Type = str_remove(Type ,"group_"))
-
-# ADI category for most deprived groups
-f_cases_bin_facet <- ggplot(
-  data = d_bins_facet, 
-  aes(y = N, x = year, group = Type, color = Type)) +
-  geom_line(size = 2) +
-  scale_y_continuous(name = "cases, in millions") +
-  scale_x_discrete(name = "year") +
-  coord_cartesian(ylim = c(0, 6)) +
-  theme_ipsum() +
-  theme(
-    axis.title.y = element_text(color = mainColor, size = 20),
-    axis.title.x = element_text(color = yearColor, size = 20),
-    legend.position = c(0.95,0.15) 
-  ) +
-  ggtitle("ADI cases by ADI decile (1=most deprived), by category and year") +
-  facet_wrap(vars(pop_bins))
-f_cases_bin_facet
-
-
-## What about just general rates over time? Should be similar to graph, just moderated by population changes too
-
-# =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-
-# Looking at individual district progress over time, ideas: 
-# > look at position changes, either by rank or pop bin change each year
-# > likelihood of moving up or down
-
-## can't rank by LSOA as not the case that each LSOA (indicated by 4-digit code) has data for each year
-
-## Looking at area ADI rate rank change by year
-d_prog_AREA <- d_full |>
-  select(area_code, area_name, pop, ADI_rate, year) |> 
-  arrange(area_name) |>
-  
-  # AREA RATE: collapse into areas, but with ADI rate per area weighted by different LSOA sizes
-  mutate(
-    area_name_sub = str_sub(area_name, start = 1, end = -5),
-  ) |>
-  group_by(area_name_sub, year) |>
-  mutate(
-    pop_area = sum(pop),
-    pop_area_weight = pop / pop_area,
-    ADI_rate_weight = ADI_rate * pop_area_weight,
-    area_ADI_rate = sum(ADI_rate_weight, na.rm = TRUE)   # Some areas missing information on some categories; not many, but make sure to check
-  ) |>
-  ungroup() |>
-  
-  # get area-wide rate
-  select(area_name_sub, pop, area_ADI_rate, year) |>
-  group_by(area_name_sub, year) |>
-  summarise(
-    area_ADI_rate = max(area_ADI_rate),   # could slice, but just to be safe
-    area_pop_total = sum(pop)
-  ) |>
-  ungroup() |>
-  group_by(year) |>
-  mutate(
-    pop_total = sum(area_pop_total),
-    area_pop_total_weight = area_pop_total / pop_total,
-    area_ADI_rate_popweighted = area_ADI_rate * area_pop_total_weight
-  ) |>
-  ungroup()
-
-# >> issues: Coventry has rank = 1 for 2017 but that's because it's missing information there, so more cleaning in future
-# microbenchmark if row_number is quicker than: rank; and arrange by year and row number
-# >area_rank = rank(area_ADI_rate),
-# >arrange(year, area_ADI_rate) |>
-#   group_by(year) |>
-#   mutate(
-#     area_rank_by_year = row_number(),
-#     minus_2 = area_rank - area_rank_by_year
-#   ) |>
-#   ungroup()
-
-
-## ---------- Rate by ranks over time
-# This is different from total counts for equivalently sized population groups; no guarantee that ranked groups will be the same size
-
-d_prog_AREA |> count(year) 
-
-# Average area rate over time (area rates weighted either equally or by pop weight)
-d_prog_AREA_calcs <- d_prog_AREA |>
-  group_by(year) |>
-  summarise(
-    ADI_mean = mean(area_ADI_rate),
-    ADI_mean_popweighted = sum(area_ADI_rate_popweighted),
-    
-    ADI_median = median(area_ADI_rate),
-    ADI_sd = sd(area_ADI_rate),
-  ) |>
-  ungroup()
-# Can get weighted average if needed
-
-d_prog_AREA_calcs_long <- d_prog_AREA_calcs |> 
-  select(-ADI_sd) |> 
-  pivot_longer(cols = -year, names_to = "Measure", values_to = "Rate", names_prefix = "ADI_")
-
-f_area_rate_by_year <- ggplot(
-  data = d_prog_AREA_calcs_long,
-  aes(y = Rate, x = year, group = Measure, color = Measure)
-) +
-  geom_line(size = 2) +
-  scale_y_continuous(name = "ADI rate (average cases/person)") +
-  scale_x_discrete(name = "years") +
-  coord_cartesian(ylim = c(0.2, 0.8)) +
-  theme_ipsum() +
-  theme(
-    axis.title.y = element_text(color = mainColor, size = 20),
-    axis.title.x = element_text(color = yearColor, size = 20),
-    legend.position = c(0.2,0.8)
-  ) +
-  ggtitle("ADI rate, by year")
-f_area_rate_by_year
-
-# Check rank change over time, e.g. 2013-2021, or 2015-2021 (for future ref: some missing data could make this wonky) 
-# This is relative: so we might see rank change, but then ask what's happening in absolute terms (e.g. those getting lower rank have greater increase in rate than the decrease in rate experienced by those gaining rank)
-
-#!!! and can check average rate change by those with highest rank changes
-
-# check <- d_prog_AREA |>
-#   mutate(across
-#          
-#          , ~ str_remove(.x, "area_")))
-
-## calculate area ADI_rate rank, by year
-prog_bins <- 10
-
-d_prog_AREA_ranks <- d_prog_AREA |>
-  group_by(year) |>
-  mutate(
-    area_rank_by_year = row_number(area_ADI_rate),
-    area_rank_by_year_decile = as.factor(cut_interval(area_rank_by_year, n = prog_bins, labels = FALSE))
-  ) |>
-  ungroup() |>
-  mutate(
-    area_rank_by_year_decile_band = ifelse(area_rank_by_year_decile %in% c(1,2,3), 1, 
-                                           ifelse(area_rank_by_year_decile %in% c(4,5,6,7), 2, 3))
-  )
-
-d_prog_AREA_ranks |> count(area_rank_by_year_decile)
-d_prog_AREA_ranks |> count(area_rank_by_year_decile_band)
-
-d_prog_AREA_ranks_sum <- d_prog_AREA_ranks |>
-  group_by(year, area_rank_by_year_decile) |>
-  summarise(
-    decile_rate_mean = mean(area_ADI_rate),
-    decile_rate_upper = max(area_ADI_rate),
-    decile_rate_lower = min(area_ADI_rate),
-  )
-
-d_prog_AREA_band_sum <- d_prog_AREA_ranks |>
-  group_by(year, area_rank_by_year_decile_band) |>
-  summarise(
-    decile_rate_mean = mean(area_ADI_rate),
-    decile_rate_upper = max(area_ADI_rate),
-    decile_rate_lower = min(area_ADI_rate)
-  )
-
-f_area_rate_by_year_ranks <- 
-  ggplot(
-    data = d_prog_AREA_ranks_sum, 
-    aes(x = year, y = decile_rate_mean, group = area_rank_by_year_decile, color = area_rank_by_year_decile )
-  ) +
-  geom_point(size = 2) +
-  geom_line(size = 2) +
-  geom_line(
-    data = d_prog_AREA_ranks,
-    aes(y = area_ADI_rate, x = year, group = area_name_sub),
-    color = "grey", alpha = 0.2
-  ) +
-  coord_cartesian(ylim = c(0, 1.5)) +
-  scale_y_continuous(name = "average ADI rate") +
-  scale_x_discrete(name = "year") +
-  labs(color = "ADI rate decile rank") +
-  theme_ipsum() +
-  theme(
-    axis.title.y = element_text(color = mainColor, size = 20),
-    axis.title.x = element_text(color = yearColor, size = 20),
-    legend.position = "right"
-  ) +
   guides(color = guide_legend(reverse = TRUE)) +
-  ggtitle("ADI rate by decile rank, by year")
+  theme(
+    axis.title.y = element_text(color = mainColor, size = 20),
+    axis.title.x = element_text(color = yearColor, size = 20),
+    panel.grid.minor.y = element_blank(),
+  ) +
+  ggtitle("Gini coefficient of UK Income vs ADI cases")
+f_gini_joint
 
-# theme(legend.position = c(0.2, 0.8))
-f_area_rate_by_year_ranks
+# d_gini_joint_diff <- d_gini_joint |> 
+#   pivot_wider(names_from = Type, values_from = gini) |>
+#   mutate(diff = ADI - Income)
+# 
+# f_gini_joint_diff <- ggplot(
+#   data = d_gini_joint_diff, 
+#   aes(y = diff, x = year)) +
+#   # geom_col() +
+#   geom_point(size = 2) +
+#   geom_segment(aes(xend = year, y = 0, yend = diff)) +
+#   coord_cartesian(ylim = c(-0.075, 0.025)) +
+#   scale_y_continuous(name = "Gini ADI minus Income") +
+#   theme_ipsum() +
+#   theme(
+#     axis.title.y = element_text(color = mainColor, size = 20),
+#     axis.title.x = element_blank(),
+#     axis.line.x = element_blank(),
+#     axis.text.x = element_blank(),
+#     legend.position = "none"
+#   )
+# f_gini_joint_diff
 
-## ----------- rate changes by rank
+```
 
-# rate changes by band
-year_1 <- "2020"
-year_2 <- "2021"
+# Diving into district performance
 
-# d_prog_AREA_band_sum_change <- d_prog_AREA_band_sum |>
-#   filter(year %in% c(year_1, year_2)) |>
-#   pivot_wider(names_from = year, values_from = decile_rate_mean, names_prefix = "rate_") |>
-#   mutate(rate_change = rate_2021 - rate_2020)
+We've looked broadly at ADI cases / rate changes over time and
+inequality among LSOAs, both overall and by sub-category. It's possible
+to get more granular and look more closely at ADI changes in specific
+areas.
 
-# rate change by decile
-d_prog_AREA_ranks_sum_change <- d_prog_AREA_ranks_sum |>
-  rename_with(~ str_remove(.x, "decile_rate_"), cols = starts_with("decile_rate_")) |>
-  pivot_wider(names_from = year, values_from = c(mean, upper, lower)) |>
-  mutate(
-    rate_change = mean_2021 - mean_2020,
-    rate_color = ifelse(rate_change >= 0, "#69b3a2", "#b31307")
+For example, the table below shows **data at District level** (LSOAs are
+grouped into their respective Districts).
+
+The [**orange**]{style="color: #e66000"} column shows each district's
+change in ADI rate between 2020 and 2021. We can sort the table by this
+column to see Districts with the largest positive changes (indicates a
+worsening) or negative changes (indicates an improvement) in ADI rate.
+
+```{r district performance, echo=FALSE, message=FALSE, warning=FALSE}
+
+year_input_district_1 <- "2020"
+year_input_district_2 <- "2021"
+  
+d_district_lag <- d_district |>
+  arrange(district, year) |>
+  group_by(district) |>
+  mutate (
+    rate_change = round(rate_ADI - lag(rate_ADI), digits = 5),
+  ) |> 
+  ungroup()
+
+d_district_lag_select<- d_district_lag |> 
+  filter(year %in% c(year_input_district_1, year_input_district_2))
+
+# Table of performers
+d_district_select <- d_district_lag_select |> 
+  filter(year == year_input_district_2) |>
+  select(district, pop, rate_change, cases_ADI, rate_ADI, everything(), -year)
+  
+d_district_select |> 
+  arrange(desc(rate_change)) |>
+  gt() |>
+  tab_header(title = "District ADI info and sub-categories, 2021") |>
+  tab_options(
+    ihtml.active = TRUE,
+    ihtml.use_pagination = TRUE,
+    ihtml.use_highlight = TRUE,
+    ihtml.page_size_default = 15,
+    # ihtml.use_filters = TRUE,
+    ihtml.use_search = TRUE
+    ) |>
+  fmt_number(
+    columns = starts_with("rate_"),
+    ) |>
+  fmt_number(
+    columns = c(pop, starts_with("cases")),
+    decimals = 0
+  ) |>
+  data_color(columns = rate_change,
+             colors = "#e66000"
+             ) |>
+  cols_label(
+    district = "District",
+    pop = "Population",
+    rate_change = "ADI rate change",
+    cases_ADI = "ADI cases",
+    rate_ADI = "ADI rate",
+    
+    cases_claims = "Claims cases",
+    rate_claims = "Claims rate",
+    
+    cases_crime = "Crime cases",
+    rate_crime = "Crime rate",
+    
+    cases_health = "Health cases",
+    rate_health = "Health rate",
   )
 
-# graph rate changes by rank
-f_area_rate_change <- 
+```
+
+<br>
+
+There's a lot to explore. To start, we don't yet know **what a
+particularly good or bad rate change** is.
+
+We can plot rate changes by districts (ranked from worst to best), as in
+the figure below, and see if there are any patterns ([red
+line]{style="color:#b31307"}: reverse of the typical inverse of the
+lognormal cumulative distribution function [??]).
+
+```{r district cutoff, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Is there a natural cutoff?
+
+d_select_cutoff <- d_district_lag_select |> 
+  filter(year == year_input_district_2) |> 
+  arrange(desc(rate_change)) |>
+  mutate(
+    index = row_number(),
+    qlnorm = qlnorm(rate_change+0.1) - 0.1
+         )
+
+# plot(d_select_cutoff$qlnorm)
+
+f_ADI_cutoff <- ggplot(
+  data = d_select_cutoff,
+  aes(x= index, y=rate_change, text = district)
+) +
+  geom_point(size = 0.5) +
+  geom_hline(yintercept = 0, size = 0.5, color = "grey") +
+  geom_line(aes(y = qlnorm - 0.2, group = 1), color = lcColor) +
+  scale_y_continuous(name = "ADI rate change", breaks = seq(-0.2,0.3, 0.05)) +
+  scale_x_continuous(name = "District") +
+  coord_cartesian(ylim = c(-0.1, 0.25)) +
+  theme_ipsum() +
+  theme(  
+    axis.text.x = element_blank(),
+    axis.title.y = element_text(color = mainColor, size = 20),
+    axis.title.x = element_text(color = yearColor, size = 20),
+  )
+f_ADI_cutoff
+```
+
+As in the figures below, we can **arbitrarily select and analyse the top
+10 worst and best performing districts** and see how they've changed
+relative to others.
+
+One interesting insight is that, there's a large overlap between the
+best and worst group's 2020 starting points; i.e., they are reasonably
+spread across the distribution.
+
+Why do districts at similar levels see such vastly different changes? A
+question for the future!
+
+```{r district best and worst, echo=FALSE, message=FALSE, warning=FALSE, fig.show='hold', out.width="50%"}
+
+# Get worst and best performers
+n_slice <- 10
+
+d_select_worst <- d_district_lag_select |> 
+  filter(year == year_input_district_2) |>
+  arrange(desc(rate_change)) |>  
+  slice_head(n=n_slice)
+
+d_select_best <- d_district_lag_select |> 
+  filter(year == year_input_district_2) |>
+  arrange(rate_change) |>
+  slice_head(n=n_slice)
+
+
+d_district_lag_worst <- d_district_lag_select |>
+  filter(district %in% d_select_worst$district)
+
+d_district_lag_best <- d_district_lag_select |>
+  filter(district %in% d_select_best$district)
+
+
+d_district_lag_main <- d_district_lag_select |>
+  filter(!(district %in% d_select_worst$district) & !(district %in% d_select_best$district))
+
+
+f_rate_worst <- 
   ggplot(
-    data = d_prog_AREA_ranks_sum_change, 
-    aes(x = area_rank_by_year_decile, y = rate_change, group = rate_color, color = rate_color)
+    data = d_district_lag_main,
+    aes(x = year, y = rate_ADI, label = district)
   ) +
-  geom_point(size = 2) +
-  geom_segment(aes(xend = area_rank_by_year_decile, y = 0, yend = rate_change)) +
-  # geom_errorbar() +
-  geom_hline(yintercept = 0, size = 0.25, color = "grey") +
-  coord_cartesian(ylim = c(-0.02, 0.08)) +
-  scale_y_continuous(name = "change in ADI rate") +
-  scale_x_discrete(name = "area ADI rate decile rank") +
+  geom_point(color = "grey", alpha = 0.3, position = position_jitter()) +
+  geom_boxplot(alpha = 0.2) +
+  
+  # biggest rate increases (worst performers)
+  geom_point(data = d_district_lag_worst, color = lcColor) +
+  geom_line(data = d_district_lag_worst, aes(group = district), color = lcColor) +
+  
+  coord_cartesian(ylim = c(0.25, 1.5)) +
+  scale_y_continuous(name = " average ADI rate", breaks = seq(0, 2, 0.25)) +
+  scale_x_discrete(name = "year") +
+  scale_color_manual(values=c(lcColor, yearColor)) + 
   theme_ipsum() +
   theme(
     axis.title.y = element_text(color = mainColor, size = 20),
     axis.title.x = element_text(color = yearColor, size = 20),
-    legend.position = "none"
+    # legend.position = "none"
   ) +
-  ggtitle(paste0("change in ADI rate between ", year_1," and ", year_2,", by ADI decile rank"))
-f_area_rate_change
+  ggtitle(paste0("worst-performing districts (ADI rate between ", year_input_1," and ", year_input_2, ")"))
+f_rate_worst
+# ggplotly(f_rate_worst)
 
+f_rate_best <- 
+  ggplot(
+    data = d_district_lag_main,
+    aes(x = year, y = rate_ADI, label = district)
+  ) +
+  geom_point(color = "grey", alpha = 0.3, position = position_jitter()) +
+  geom_boxplot(alpha = 0.2) +
+  
+  # biggest rate decreases (best performers)
+  geom_point(data = d_district_lag_best, color = mainColor) +
+  geom_line(data = d_district_lag_best, aes(group = district), color = mainColor) +
+  
+  coord_cartesian(ylim = c(0.25, 1.5)) +
+  scale_y_continuous(name = " average ADI rate", breaks = seq(0, 2, 0.25)) +
+  scale_x_discrete(name = "year") +
+  scale_color_manual(values=c(lcColor, yearColor)) + 
+  theme_ipsum() +
+  theme(
+    axis.title.y = element_text(color = mainColor, size = 20),
+    axis.title.x = element_text(color = yearColor, size = 20),
+    # legend.position = "none"
+  ) +
+  ggtitle(paste0("best-performing districts (ADI rate between ", year_input_1," and ", year_input_2, ")"))
+f_rate_best
+# ggplotly(f_rate_best)
+```
 
+```{r district best and worst both, echo=FALSE, message=FALSE, warning=FALSE}
 
-# Table of rank change
+f_rate_both <- 
+  ggplot(
+    data = d_district_lag_main,
+    aes(x = year, y = rate_ADI, label = district)
+  ) +
+  geom_point(color = "grey", alpha = 0.3, position = position_jitter()) +
+  geom_boxplot(alpha = 0.2) +
+  
+  # biggest rate decreases (best performers)
+  geom_point(data = d_district_lag_best, color = mainColor) +
+  geom_line(data = d_district_lag_best, aes(group = district), color = mainColor) +
+  
+  # biggest rate increases (worst performers)
+  geom_point(data = d_district_lag_worst, color = lcColor) +
+  geom_line(data = d_district_lag_worst, aes(group = district), color = lcColor) +
+  
+  coord_cartesian(ylim = c(0.25, 1.5)) +
+  scale_y_continuous(name = " average ADI rate", breaks = seq(0, 2, 0.25)) +
+  scale_x_discrete(name = "year") +
+  scale_color_manual(values=c(lcColor, yearColor)) + 
+  theme_ipsum() +
+  theme(
+    axis.title.y = element_text(color = mainColor, size = 20),
+    axis.title.x = element_text(color = yearColor, size = 20),
+    # legend.position = "none"
+  ) +
+  ggtitle(paste0("district-level ADI rate between ", year_input_1," and ", year_input_2))
+f_rate_both
+```
 
-d_prog_AREA_ranks_lag <- d_prog_AREA_ranks |>
-  select(area_name_sub, year, area_ADI_rate, area_rank_by_year, area_rank_by_year_decile) |>
-  arrange(area_name_sub, year) |>
-  group_by(area_name_sub) |>
-  mutate (
-    rate_change = round(area_ADI_rate - lag(area_ADI_rate), digits = 5),
-    rank_change = area_rank_by_year - lag(area_rank_by_year),
-    rank_decile_change = as.numeric(area_rank_by_year_decile) - as.numeric(lag(area_rank_by_year_decile))
+Finally, given the variation of Districts' experiences, another
+interesting question is to what extent the inequality in ADI rates is
+driven by differences between districts or within the districts
+themselves.
+
+This approach has more general application: is inequality greater
+between or within rural vs urban spaces, or within or between race and
+gender groupings?
+
+Thankfully, there's a measure of inequality that's suitable for this:
+**Theil's generalised entropy measure** **of inequality** can be broken
+into a **between- and within-group component** of inequality.
+
+The formula looks like this:
+
+![](images/theil%20breakdown.png)
+
+<br>
+
+Plotting the Theil total measure of ADI inequality over time looks
+similar to the Gini plot earlier (good news suggesting the calculations
+are correct!).
+
+We also see that overall inequality in ADI looks **driven by
+within-district rather than between-district** inequality.
+
+This probably has important implications for how the sub-categories of
+ADI can be addressed---and for political analysis that focuses on
+micro-level experiences between geographically close areas.
+
+```{r Theil calculations, echo=FALSE, message=FALSE, warning=FALSE}
+
+df <- d_LSOA |>
+  # filter(year %in% c("2020", "2021")) |>
+  mutate(
+    district = str_sub(area_name, start = 1, end = -5),     # identify district name
+  ) |>
+  select(area_name, district, pop, cases_ADI_LSOA, year) |>
+  rename(
+    neighbourhood_name = area_name,
+    district_name = district,
+    number_of_job_claims = cases_ADI_LSOA,
+    neighbourhood_population = pop,
+  )
+
+# overall Theil measure
+
+# total_job_claims <- df |>
+#   group_by(year) |>
+#   summarise(
+#     total_job_claims = sum(number_of_job_claims, na.rm = TRUE)
+#   )
+# 
+# overall_neighbourhood_mean <- df |>
+#   group_by(year) |>
+#   summarise(
+#     overall_neighbourhood_mean = mean(number_of_job_claims, na.rm = TRUE)
+#   )
+
+theil <- df |>
+  group_by(year) |>
+  mutate(
+    overall_neighbourhood_mean = mean(number_of_job_claims, na.rm = TRUE),
+    claims_share = number_of_job_claims / overall_neighbourhood_mean,
+    theil = claims_share * log(claims_share)
+  ) |>
+  summarise(
+    theil = sum(theil, na.rm = TRUE) / length(neighbourhood_name)
+  )
+# theil
+
+# total: 0.1796
+
+# calculate between-district Theil index
+
+between_district_theil <- df %>%
+  group_by(year) |>
+  mutate(
+    total_job_claims = sum(number_of_job_claims, na.rm = TRUE),
+    overall_neighbourhood_mean = mean(number_of_job_claims, na.rm = TRUE)
   ) |>
   ungroup() |>
-  rename(
-    rate = area_ADI_rate,
-    rank = area_rank_by_year,
-    rank_decile = area_rank_by_year_decile,
+  group_by(year, district_name) |>
+  summarise(
+    district_job_claims = sum(number_of_job_claims, na.rm = TRUE),
+    district_job_claims_share = district_job_claims / mean(total_job_claims, na.rm = TRUE),
+    district_job_claims_mean = mean(number_of_job_claims, na.rm = TRUE),
+    between_district_theil = district_job_claims_share * log(district_job_claims_mean / mean(overall_neighbourhood_mean, na.rm = TRUE))
   )
 
-d_prog_AREA_ranks_lag |> count(rank_change)
-d_prog_AREA_ranks_lag |> count(rank_decile, rank_decile_change)
-
-# make data wide
-d_prog_AREA_ranks_lag_wide <- d_prog_AREA_ranks_lag |>
-  pivot_wider(names_from = c(year), values_from = c(rate, rate_change), names_sep = "_")
-
-#  can just focus on the 40 that got better and worse
-
-
-d_prog_AREA_ranks_lag |> filter(year == "2021") |> count(rank_change)
-d_prog_AREA_ranks_lag |> filter(year == "2021") |> count(rank_decile_change)
-
-
-# View(d_prog_AREA_ranks_lag |> filter(year == "2021", rank_decile_change %in% c(1,-1)))
-
-area_id_rank_change <- d_prog_AREA_ranks_lag |> filter(year == "2021", rank_decile_change %in% c(1,-1))
-  area_id_rank_change
-
-d_prog_AREA_ranks_lag_recent <- d_prog_AREA_ranks_lag |> 
-  filter(year %in% c("2020","2021"), area_name_sub %in% area_id_rank_change$area_name_sub) |>
-  mutate(
-    change_group = ifelse(year == "2021" & rank_decile_change == -1, 1, 
-                          ifelse(year == "2021" & rank_decile_change == 1, 2,0)),
-    rate_color = ifelse(rank_decile_change == 1, "#69b3a2", "#b31307")
-  ) |> 
-  group_by(area_name_sub) |>
-  mutate(
-    change_group_max = as.factor(max(change_group))
-  ) |>
-  ungroup()
-
-# get upper limits of ADI rate decile bands
-d_deciles_limits <- d_prog_AREA_ranks |>
-  select(year, area_ADI_rate, area_rank_by_year_decile) |> 
-  group_by(year, area_rank_by_year_decile) |>
+between_district_theil_sum <- between_district_theil |>
+  group_by(year) |>
   summarise(
-    rank_mean = mean(area_ADI_rate),
-    rank_min = min(area_ADI_rate),
-    rank_max = max(area_ADI_rate)
+    between_district_theil = sum(between_district_theil, na.rm= TRUE)
+  )
+
+#between_district_theil_sum
+# 0.052 (cases)
+# 0.491 (rate)
+
+
+# calculate within-district Theil index
+within_district_theil <- df |>
+  left_join(between_district_theil |> select(district_name, year, district_job_claims_mean)) |>
+  group_by(year) |>
+  mutate(
+    total_job_claims = sum(number_of_job_claims, na.rm = TRUE),
+    overall_neighbourhood_mean = mean(number_of_job_claims, na.rm = TRUE)
+  ) |>
+  ungroup() |>
+  group_by(year, district_name) %>% 
+  mutate(
+    job_claims_share = number_of_job_claims / sum(number_of_job_claims, na.rm = TRUE),
+    neighbourhood_theil = job_claims_share * log(number_of_job_claims / district_job_claims_mean)
+  ) |>
+  ungroup() |> 
+  group_by(year, district_name) |>
+  summarise(
+    neighbourhood_theil_sum = sum(neighbourhood_theil, na.rm = TRUE)
   ) |> 
-  ungroup()
+  ungroup() |>
+  left_join(between_district_theil |> select(district_name, district_job_claims_share)) |>
+  mutate(
+    neighbourhood_theil_times_district_share = neighbourhood_theil_sum * district_job_claims_share
+  )
 
-f_decile_change <- ggplot(
-  data = d_prog_AREA_ranks_lag_recent |> filter(change_group_max == 2),
-  aes(x = year, y = rate, group = area_name_sub)
-  ) +
-  geom_point() +
-  geom_line() +
-  # geom_point(
-  #   data = d_deciles_limits,
-  #   aes(y = rank_max, group = NULL),
-  #   color = "black", size = 4
-  # ) +
-  geom_errorbar(
-    data = d_deciles_limits |> filter(year == "2020"),
-    aes(y = NULL, x = year, color = area_rank_by_year_decile, ymin = rank_min, ymax = rank_max, group = NULL),
-    size = 2, width = 0.1, alpha = 0.4, position = position_nudge(x = -0.05)
-  ) +
-  geom_errorbar(
-    data = d_deciles_limits |> filter(year == "2021"),
-    aes(y = NULL, x = year, color = area_rank_by_year_decile, ymin = rank_min, ymax = rank_max, group = NULL),
-    size = 1, width = 0.1, alpha = 0.4, position = position_nudge(x = +0.05)
-  ) +
-  coord_cartesian(ylim = c(0.2, 1.5)) +
-  scale_y_continuous(name = "ADI rate", breaks = seq(0, 25, 0.25)) +
+within_district_theil_sum <- within_district_theil |>
+  group_by(year) |>
+  summarise(
+    within_district_theil = sum(neighbourhood_theil_times_district_share)
+  )
+
+#within_district_theil_sum
+
+# 0.127 (using cases)
+# 0.099 (using rates)
+
+# combine datasets
+theil_total <- left_join(theil, between_district_theil_sum) |> left_join(within_district_theil_sum) |>
+  mutate(
+    T_between_contribution = between_district_theil / theil
+  ) |>
+  rename(
+    T_total = theil,
+    T_between = between_district_theil,
+    T_within = within_district_theil
+  )
+
+theil_total_long <- theil_total |>
+  pivot_longer(cols = -year, names_to = "Theil_component", values_to = "Theil_value")
+
+# head(theil_total_long)
+
+theil_total_long$Theil_component <- fct_relevel(theil_total_long$Theil_component, "T_total", "T_within", "T_between")
+
+f_theil <- ggplot(
+  data = theil_total_long |> filter(Theil_component != "T_between_contribution"), 
+  aes(y = Theil_value, x = year, group = Theil_component, color = Theil_component)) +
+  geom_line(size = 2) +
+  coord_cartesian(ylim = c(0,0.3)) +
+  scale_y_continuous(name = "Theil value") +
   scale_x_discrete(name = "year") +
+  scale_color_discrete(name = "Theil Component") +
+  guides(color = guide_legend(reverse = TRUE)) +
   theme_ipsum() +
   theme(
     axis.title.y = element_text(color = mainColor, size = 20),
-    axis.title.x = element_text(color = yearColor, size = 20),
-    legend.position = "none",
-    panel.grid.major.x = element_blank()
+    axis.title.x = element_text(color = yearColor, size = 20)
   ) +
-  ggtitle("ADI rate in 2020 and 2021 for 40 areas seeing worsening of decile rank (with ADI decile bands shown)")
-
-f_decile_change
-
-d_select_worst <- d_prog_AREA_ranks_lag_recent |> 
-  filter(year == "2021") |>
-  arrange(desc(rate_change)) |>
-  slice_head(n=5)
-
-# select biggest changes only
-f_decile_change_worst <- ggplot(
-  data = d_prog_AREA_ranks_lag_recent |> filter(area_name_sub %in% d_select_worst$area_name_sub),
-  aes(x = year, y = rate, group = area_name_sub)
-  ) +
-  geom_point() +
-  geom_line() +
-  annotate("text", x = 2, y = d_select_worst$rate, 
-           label = ( paste0(d_select_worst$area_name_sub," (+",round(d_select_worst$rate_change, digits=3),")")), 
-           hjust = -1) +
-  # geom_point(
-  #   data = d_deciles_limits,
-  #   aes(y = rank_max, group = NULL),
-  #   color = "black", size = 4
-  # ) +
-  geom_errorbar(
-    data = d_deciles_limits |> filter(year == "2020"),
-    aes(y = NULL, x = year, color = area_rank_by_year_decile, ymin = rank_min, ymax = rank_max, group = NULL),
-    size = 2, width = 0.1, alpha = 0.4, position = position_nudge(x = -0.05)
-  ) +
-  geom_errorbar(
-    data = d_deciles_limits |> filter(year == "2021"),
-    aes(y = NULL, x = year, color = area_rank_by_year_decile, ymin = rank_min, ymax = rank_max, group = NULL),
-    size = 1, width = 0.1, alpha = 0.4, position = position_nudge(x = +0.05)
-  ) +
-  coord_cartesian(ylim = c(0.75, 1.25)) +
-  scale_y_continuous(name = "ADI rate", breaks = seq(0, 25, 0.25)) +
-  scale_x_discrete(name = "year") +
-  theme_ipsum() +
-  theme(
-    axis.title.y = element_text(color = mainColor, size = 20),
-    axis.title.x = element_text(color = yearColor, size = 20),
-    legend.position = "none",
-    panel.grid.major.x = element_blank()
-  ) +
-  ggtitle("ADI rate in 2020 and 2021 for 5 areas seeing worst change (with ADI decile bands shown)")
-
-f_decile_change_worst
-
-
-
-
-# print figures
-
-
-
-# legend.justification in theme?
-
+  ggtitle("Theil ADI measure, between versus within Districts")
+f_theil
 
 ```
 
-Annual Deprivation Index (ADI) is a summation of (1) job claims, (2) crime statistics and (3) mental health cases. Combined with data on population per area, this allows us to calculate a rate (ADI cases/person) for each LSOA or Area. As pointed out by the publishers, there are many advantages to having a cardinal scale; the purpose of this doc is to briefly explore these.
-
-## Analysis
-One advantage of having ADI rates / area is that we can compare rates across areas. There are many ways to do this. While the IMD involves a relative measure of rank, it carries no information on distribution of impacts. So the first thing we can do is compare rates (so still a relative measure) but look at rate inequality across LSOAs.
-
-The following is a Lorenz curve of ADI rates. It shows cumulative ADI cases (per LSOA, weighted by LSOA population) by cumulative population (ranked by ADI rate, with highest rates to the right hand side), broken into 10 equal population-sized deciles. The 45 degree line represents perfect equality, such that, for example, 20% of the population have 20% of all ADI cases. A curve lying below this reflects the fact that some deciles have more cases than others. 
-
-We can see that there is large inequality in ADI cases. For example, the 60% least affected members of the population experience between 30-40% of all cases. This looks relatively consistent across years.
-
-```{r , echo = FALSE}
-f_lc
-```
-
-It's useful to see what the major contributor to ADI inequality is. We can eyeball this by looking at inequality among different ADI components. For example, the figure below shows, using 2021 data, inequality in total ADI cases and by ADI component. The biggest inequality is in job claims (curve furthest away from the equality line), followed by crime. It looks like there is not a great (or as great) an inequality in mental health cases.
-
-```{r , echo = FALSE}
-f_lc_cat
-```
-
-The first graph gave a general idea of inequality in ADI cases, but didn't specifically calculate inequality or make clear any trend in inequality ove time. The following figure shows the Gini coefficient of ADI cases over time. 
-
-The Gini coefficient is a measure of inequality obtained by subtracting the area under the Lorenz curve from the area under the line of equality. Larger Gini coefficients indicate a smaller area under the Lorenz curve (it shifts further away from the line of equality), and so greater inequality.
-
-The figure below shows the change in the Gini coefficient of ADI cases over the data period 2013-2021. It shows that ADI case inequality actually decreased over time, though has increased in the past year. This is good news!
-
-```{r , echo = FALSE}
-f_gini_year
-```
-
-We can again break ADI total down into its component parts, as in the figure below. The reduction in inequality looks due to reductions in claims and crime inequality, though the relatively large 2016 increase and then subsequent decrease in health inequality is worth mentioning.
-
-```{r , echo = FALSE}
-f_gini_year_cat
-```
-
-The problem with the analysis above is that inequality decreases only tell us half the story. While reductions over time are good -- they show that there is a slow decrease in ADI inequality -- it ignores changes in overall levels of ADI cases over time. 
-
-The graph below shows clearly that while inequality may have reduced over time, total cases have risen sharply; all groups have seen significant increases in cases (note: to assume rates increase, we must assume that population is relatively constant; I analyse rates shortly). 
-
-The graph also shows that these increases are driven largely by increases in job claims, while crime cases have remained relatively constant. Mental health cases are much lower contributor to ADI cases overall, but notice that they started at a low base and have almost doubled in the past decade.
-
-```{r , echo = FALSE}
-f_cases_year
-```
-
-Adding in the proportion of all cases by category in the figure below confirms that job claims are the biggest contributor to increases in total ADI cases over time.
-
-```{r , echo = FALSE}
-f_cases_stack
-```
-
-The figure below shows total cases broken down by LSOA ADI-rate decile (LSOAs ranked by ADI rate, then broken into equal-sized population groups). The top two (of ten) most deprived deciles have a much larger ADI case load than the other deciles; the most deprived has more than double the number of cases than every other decile barring the next most deprived.
-
-```{r , echo = FALSE}
-f_cases_bins
-```
-
-Putting this in terms of rates makes the comparison even sharper.
-
-It also looks like rates haven't changed much in the past two years, but as we'll see below, there are large differences between the most and least deprived groups -- and a widening of inequality.
-
-```{r , echo = FALSE}
-f_area_rate_by_year_ranks
-```
-
-And breaking into the various deciles makes the point visually striking; it's particularly the most deprived that have seen the highest change in especially job claims in the past few years.
-
-```{r , echo = FALSE}
-f_cases_bin_facet
-```
-
-If we look only at the most recent two years of data, we can see that the increase in rates for the two most deprived groups is far higher than the modest changes (and even improvements) in rates for all other groups. This shows a sharp divergence in ADI impacts and a clear widening of inequality.
-
-```{r , echo = FALSE}
-f_area_rate_change
-```
-
-We can look at those Areas that moved down a decile in ranking. There are 40 of them, and this worsening takes place across the deciles (i.e., not only in the most deprived deciles). The ADI rate bands are shown for clarity.
-
-```{r worst_40, echo = FALSE}
-f_decile_change
-```
-
-We can identify specific areas that have worsened much more than others. This is useful, as we can then dive into potential reasons why these areas have seen such a sharp change relative to their peers -- and use this information to address social change in something more like real-time than using e.g. only the IMD every few years.
-
-The figue below shows the 5 Areas with the largest increase in ADI rates.
-
-
-```{r worst_5, echo = FALSE}
-f_decile_change_worst
-```
+# Conclusion

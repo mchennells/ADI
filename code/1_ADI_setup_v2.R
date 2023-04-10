@@ -9,6 +9,8 @@ suppressPackageStartupMessages({
   library(microbenchmark)
   library(hrbrthemes)
   library(ineq)
+  library(openxlsx)
+  library(mice)
 })
 
 here()
@@ -21,12 +23,15 @@ ADI_years <- list.files(here("data", "ADI_all-domains"))
   ADI_years
 
 years_list <- trimws(ADI_years[-(length(ADI_years))] )   # 2022 doesn't have any health data
-#years_list <- c("ADI_2020","ADI_2021")
+# years_list <- c("ADI_2020", "ADI_2021") 
   years_list
 
-d_all <- tibble()
-d_ADI_all <- tibble()
-
+  
+# ==========  Get ADI data; yearly and overall ==========
+  
+d_ADI_LSOA <- tibble()
+d_ADI_AREA <- tibble()
+  
 for (year_file in years_list) {
   
   year <- str_sub(year_file, -4, -1)
@@ -45,8 +50,7 @@ for (year_file in years_list) {
   
   print(dim(d_claims))
   
-  
-  # ==========  set up ADI ==========
+  # ==============================  ADI dataset: LSOA ============================================================
   
   ## Get total population
   pop_total <- sum(d_claims$pop)
@@ -59,8 +63,8 @@ for (year_file in years_list) {
   d_claims_select <- d_claims |> 
     select(
       area_code, area_name, pop,
-      rate_claims = claimant_rate,
-      cases_claims = claimant_count
+      cases_claims = claimant_count,
+      rate_claims = claimant_rate
     )
   
   ## ---------- Crime
@@ -72,10 +76,12 @@ for (year_file in years_list) {
   d_crime_select <- d_crime |>
     rowwise(area_code, area_name, pop) |>
     summarise(
-      rate_crime = sum(c_across(ends_with("_rate"))),
-      cases_crime = sum(c_across(!ends_with("_rate"))),
+      cases_crime = sum(c_across(!ends_with("_rate")), na.rm = TRUE),
+      rate_crime = sum(c_across(ends_with("_rate")), na.rm = TRUE),
+      # cases_crime_2 = `anti-social_behaviour` + bicycle_theft + burglary + criminal_damage_and_arson + drugs + other_crime + other_theft + possession_of_weapons + public_order + 
+      #   robbery + shoplifting + theft_from_the_person + vehicle_crime + violence_and_sexual_offences
     ) |>
-    select(area_code, area_name, pop, rate_crime, cases_crime)
+      select(area_code, area_name, pop, cases_crime, rate_crime)
   # >> use microbenchmark to run tests on what's quicker: rowwise or using base R (see https://dplyr.tidyverse.org/articles/rowwise.html)
   
   ## ---------- Health
@@ -91,136 +97,104 @@ for (year_file in years_list) {
     ) |>
     rowwise(area_code, area_name, pop) |>
     summarise(
-      rate_health = DEP_prevalence_rate + MH_prevalence_rate,
-      cases_health = DEP_afflicted + MH_afflicted
+      cases_health = round(DEP_afflicted + MH_afflicted, digits = 0),   # Rounded
+      rate_health = DEP_prevalence_rate + MH_prevalence_rate
     ) |>
-    select(area_code, area_name, pop, rate_health, cases_health)
+    select(area_code, area_name, pop, cases_health, rate_health)
   
-  ## ---------- ADI
+  ## ------------------------------ join 3 datasets to get yearly dataset
   
-  d_ADI <- d_claims_select |> 
+  d_ADI_1 <- d_claims_select |> 
     full_join(d_crime_select, by = c("area_code", "area_name", "pop")) |>
     full_join(d_health_select,  by = c("area_code", "area_name", "pop"))
-  
-  d_ADI <- d_ADI |>
+
+  d_ADI_2 <- d_ADI_1 |>
     mutate(
-      ADI_cases = cases_claims + cases_crime + cases_health,    # issue here with NA! doesn't add up, so ignores the cases in claims etc. but where health/crime is missing
-      ADI_rate = rate_claims + rate_crime + rate_health,   # can add rates as population is same for each denominator (i.e., pop of the district)
-      ADI_cases_tot = sum(ADI_cases),
-      weight_pop_lsoa = pop/pop_total,
-      weight_cases_lsoa = ADI_cases/ADI_cases_tot, 
+      cases_ADI_LSOA = cases_claims + cases_crime + cases_health,   # issue here with NA! doesn't add up, so ignores the cases in claims etc. but where health/crime is missing
+      rate_ADI_LSOA = rate_claims + rate_crime + rate_health,   # can add rates as population is same for each denominator (i.e., pop of the district)
       year = year
     )
   
-  glimpse(d_ADI)
+    sum(d_ADI_2$cases_ADI_LSOA)
   
   # To get district, remove the last 4 numbers (and space) from the end of district name (first check that the 4 letters uniquely identifies districts) 
   # and then group by district name
   
-  d_ADI_all <- bind_rows(d_ADI_all, d_ADI)
+  d_ADI_LSOA <- bind_rows(d_ADI_LSOA, d_ADI_2)
   
-  # ==========  Gini ==========
+  # Impute missing values
+  d_ADI_LSOA_mice <- mice(d_ADI_LSOA)
+  d_ADI_LSOA <- complete(d_ADI_LSOA_mice)
   
-  pop_total <- sum(d_ADI$pop)
-  pop_total
-  ADI_cases_total <- sum(d_ADI$ADI_cases)
-  ADI_cases_total
-
-  range(d_ADI$ADI_rate)
   
-  d_ADI <- d_ADI |> mutate(ADI_rate_inverse = 1/ADI_rate)
+  # ==============================  ADI dataset: District ============================================================
   
-  # ----------  Gini coefficient
-  
-  # Number of bins to break Lorenz curve into
-  n_bins <- 10
-  
-  # x-axis: rank LSOAs by ADI rate: cumulative (adding up to total number of people), normalised (by byson) rank of ADI rates (i.e., rank of numer of cases by byson)
-  d_gini <- d_ADI |> 
-    arrange(desc(ADI_rate)) |>
+  d_ADI_AREA <- d_ADI_LSOA |> 
+    
+    # identify district name
     mutate(
-      # Break up into chunks of population
-      pop_cumsum = cumsum(pop),
-      pop_bins = cut_interval(pop_cumsum, n = n_bins, labels = FALSE),   # Break into bins
-      # OR: cut(pop_cumsum, breaks = 100, labels = FALSE)
-    )
-  
-  d_gini |> count(pop_bins)
-  
-  #plot(d_ADI$ADI_rate, d_ADI$ADI_cases)
+      district = str_sub(area_name, start = 1, end = -5),
+    ) |>
+    
+    # aggregate areas BUT with ADI rate per area weighted by different LSOA pop x rates
+    
+    group_by(district, year) |>   # for each area, in each year ... 
+    mutate(
+      pop = sum(pop, na.rm = TRUE),   # total population of the AREA
+      cases_ADI = sum(cases_ADI_LSOA, na.rm = TRUE),   # total cases by AREA
+      rate_ADI = cases_ADI / pop,
 
-  # Get overall factors (case load and rates) by group / bin
-  d_gini_sum <- d_gini |> 
-    group_by(pop_bins) |> 
-    summarise(       
-      cases_group_claims = sum(cases_claims, na.rm = TRUE),
-      cases_group_crime = sum(cases_crime, na.rm = TRUE),
-      cases_group_health = sum(cases_health, na.rm = TRUE),
+      # # alternative method: get local population-weighted average of LSOA ADI rates (tiniest bit different to simpler approach above)
+      # pop_weight_LSOA_of_AREA = pop / pop_AREA,   # weight of LSOA population of AREA population
+      # ADI_rate_weight_of_LSOA = ADI_rate * pop_weight_LSOA_of_AREA,   # get LSOA ADI rate weighted by LSOA population weight of area
+      # ADI_rate_AREA = sum(ADI_rate_weight_of_LSOA, na.rm = TRUE),   # get AREA ADI rate; some areas missing information on some categories; not many, but make sure to check
+      # # area_ADI_rate_dot = ADI_rate %*% pop_area_weight, # dot product calculation leaves a strange column heading
       
-      cases_group = cases_group_claims + cases_group_crime + cases_group_health,
-      #cases_group = sum(ADI_cases, na.rm = TRUE),
+      # claims
+      cases_claims = sum(cases_claims, na.rm = TRUE),
+      rate_claims = cases_claims / pop,
       
-      pop_group = sum(pop, na.rm = TRUE)
-      ) |>
-    ungroup()
-  
-  sum(d_gini_sum$cases_group)
-  ADI_cases_total
-  
-  #plot(d_gini_sum$pop_bins, d_gini_sum$cases_group)
-  
-  # Get Lorenz curve values in dataframe (note cumulative values)
-    ineq::Lc(d_gini_sum$cases_group)
-  
-  d_lc <-   tibble(
-    lc_p = ineq::Lc(d_gini_sum$cases_group)$p,   # bycentages (of population by group)
-    lc_L = ineq::Lc(d_gini_sum$cases_group)$L,   # values of ordindary Lorenz curve: normalised (divided by total cases), cumulative sum of cases
-    lc_g = ineq::Lc(d_gini_sum$cases_group)$L.general*10,   # values of generalised Lorenz curve: non-normalized, cumulative sum of cases
+      # crime
+      cases_crime = sum(cases_crime, na.rm = TRUE),
+      rate_crime = cases_crime / pop,
+      
+      # health
+      cases_health = sum(cases_health, na.rm = TRUE),
+      rate_health = cases_health / pop,
+      
+    ) |>
+    ungroup() |>
+    select(
+      district, pop, 
+      cases_ADI, rate_ADI,
+      cases_claims, rate_claims,
+      cases_crime, rate_crime,
+      cases_health, rate_health,
+      year
+    ) |>
+    distinct()
     
-    # claims only
-    lc_p_claims = ineq::Lc(d_gini_sum$cases_group_claims)$p,   
-    lc_L_claims = ineq::Lc(d_gini_sum$cases_group_claims)$L,   
-    lc_g_claims = ineq::Lc(d_gini_sum$cases_group_claims)$L.general*10,
-    
-    # crime only 
-    lc_p_crime = ineq::Lc(d_gini_sum$cases_group_crime)$p,   
-    lc_L_crime = ineq::Lc(d_gini_sum$cases_group_crime)$L,   
-    lc_g_crime = ineq::Lc(d_gini_sum$cases_group_crime)$L.general*10,
-    
-    # health only
-    lc_p_health = ineq::Lc(d_gini_sum$cases_group_health)$p,   
-    lc_L_health = ineq::Lc(d_gini_sum$cases_group_health)$L,   
-    lc_g_health = ineq::Lc(d_gini_sum$cases_group_health)$L.general*10,
-    
-  )
-  
-  d_lc <- bind_cols(d_lc,
-                    d_gini_sum |> 
-                      add_row(.before = 1) |>   
-                      mutate( 
-                        across(everything(), ~replace_na(.x, 0)),
-                        pop_bins = as.factor(pop_bins),
-                      )
-  )
-    max(d_lc$lc_g)
-    sum(d_lc$cases_group)
-    ADI_cases_total
-  
-  # Add data identifier: year
-  
-  d_lc <- d_lc |> mutate(year = year)
-  
-  d_all <- bind_rows(d_all, d_lc)
-  
-} 
+}
 
-  glimpse(d_all)
-  glimpse(d_ADI_all)
-  # View(d_all)
+  glimpse(d_ADI_LSOA)
+  glimpse(d_ADI_AREA)
+
+# Few enough districts to make them short enough  
+
+d_ADI_AREA_long <- d_ADI_AREA |>
+  pivot_longer(cols = -c(district, pop, year), 
+               names_to = c(".value", "group"), 
+               names_pattern ="(cases|rate)_(.*)"
+  )
 
 # ==========  write data output  ==========
-write_csv(d_all, here("output", "d_deciles.csv"))
-write_csv(d_ADI_all, here("output", "d_full.csv"))
+  
+write_csv(d_ADI_LSOA, here("output", "d_ADI_LSOA.csv"))
+write_csv(d_ADI_AREA, here("output", "d_ADI_DISTRICT.csv"))
+write_csv(d_ADI_AREA_long, here("output", "d_ADI_DISTRICT_long.csv"))
 
+write.xlsx(d_ADI_LSOA, here("output", "d_ADI_LSOA.xlsx"))
+write.xlsx(d_ADI_AREA, here("output", "d_ADI_DISTRICT_long.xlsx"))
+write.xlsx(d_ADI_AREA_long, here("output", "d_ADI_DISTRICT_long.xlsx"))
 
-# ==========  END  ==========
+# ==============================  END  ======================================================================

@@ -17,10 +17,10 @@ here()
 
 rm(list=ls())
 
-d_dec <- read_csv(here("output", "d_deciles.csv"), 
-                  col_types = c(year = "f", pop_bins = "f"))
+d_LSOA <- read_csv(here("output", "d_ADI_LSOA.csv"), 
+                  col_types = c(year = "f"))
 
-d_full <- read_csv(here("output", "d_full.csv"),
+d_AREA <- read_csv(here("output", "d_ADI_AREA.csv"),
                    col_types = c(year = "f"))
   
 
@@ -33,7 +33,122 @@ lcColor <- "#b31307"
 # =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 
+  # print(d_LSOA |> mutate(area_name_sub = str_sub(area_name, start = 1, end = -5)) |> count(area_name_sub), n = 400)   # big variation in numbers of areas; not clear that aggregating by area is a good ideas
+
+
+# ==========  Gini ==========
+
+
+d_gini_LSOA <- d_LSOA |> 
+  arrange(year) |>
+  group_by(year) |>
+  arrange(desc(rate_ADI_LSOA)) |>   # 
+  mutate(
+      
+    # x-axis: rank LSOAs by ADI rate (i.e., LSOAs are normalised by person), get cumulative number and proportion of population
+    pop_TOTAL = sum(pop),
+    pop_LSOA_cumsum = cumsum(pop),
+    pop_LSOA_cumprop = pop_LSOA_cumsum / pop_TOTAL,
+    
+    ## or break into deciles for each of interpretation (but less accuracy)
+    # pop_bins = cut_interval(pop_cumsum, n = n_bins, labels = FALSE),   # Break into bins
+    ## OR: cut(pop_cumsum, breaks = 100, labels = FALSE)
+    
+    cases_ADI_TOTAL = sum(cases_ADI_LSOA),
+    cases_ADI_prop = cases_ADI_LSOA / cases_ADI_TOTAL,
+    cases_ADI_cumprop = cumsum(cases_ADI_prop)
+  )
+
+  #d_gini |> count(pop_bins)
+
+
+  # plot(d_gini_LSOA$pop_LSOA_cumprop, d_gini_LSOA$cases_ADI_cumprop)
+
+# ----------  Gini coefficient
+
+
+
+
+# ----------  xx
+
+# Number of bins to break Lorenz curve into
+n_bins <- 10
+
+
+#plot(d_ADI$ADI_rate, d_ADI$ADI_cases)
+
+# Get overall factors (case load and rates) by group / bin
+d_gini_sum <- d_gini |> 
+  group_by(pop_bins) |> 
+  summarise(       
+    cases_group_claims = sum(cases_claims, na.rm = TRUE),
+    cases_group_crime = sum(cases_crime, na.rm = TRUE),
+    cases_group_health = sum(cases_health, na.rm = TRUE),
+    
+    cases_group = cases_group_claims + cases_group_crime + cases_group_health,
+    #cases_group = sum(ADI_cases, na.rm = TRUE),
+    
+    pop_group = sum(pop, na.rm = TRUE)
+  ) |>
+  ungroup()
+
+sum(d_gini_sum$cases_group)
+ADI_cases_total
+
+#plot(d_gini_sum$pop_bins, d_gini_sum$cases_group)
+
+# Get Lorenz curve values in dataframe (note cumulative values)
+ineq::Lc(d_gini_sum$cases_group)
+
+d_lc <-   tibble(
+  lc_p = ineq::Lc(d_gini_sum$cases_group)$p,   # by percentages (of population by group)
+  lc_L = ineq::Lc(d_gini_sum$cases_group)$L,   # values of ordinary Lorenz curve: normalised (divided by total cases), cumulative sum of cases
+  lc_g = ineq::Lc(d_gini_sum$cases_group)$L.general*10,   # values of generalised Lorenz curve: non-normalized, cumulative sum of cases
+  
+  # claims only
+  lc_p_claims = ineq::Lc(d_gini_sum$cases_group_claims)$p,   
+  lc_L_claims = ineq::Lc(d_gini_sum$cases_group_claims)$L,   
+  lc_g_claims = ineq::Lc(d_gini_sum$cases_group_claims)$L.general*10,
+  
+  # crime only 
+  lc_p_crime = ineq::Lc(d_gini_sum$cases_group_crime)$p,   
+  lc_L_crime = ineq::Lc(d_gini_sum$cases_group_crime)$L,   
+  lc_g_crime = ineq::Lc(d_gini_sum$cases_group_crime)$L.general*10,
+  
+  # health only
+  lc_p_health = ineq::Lc(d_gini_sum$cases_group_health)$p,   
+  lc_L_health = ineq::Lc(d_gini_sum$cases_group_health)$L,   
+  lc_g_health = ineq::Lc(d_gini_sum$cases_group_health)$L.general*10,
+  
+)
+
+d_lc <- bind_cols(d_lc,
+                  d_gini_sum |> 
+                    add_row(.before = 1) |>   
+                    mutate( 
+                      across(everything(), ~replace_na(.x, 0)),
+                      pop_bins = as.factor(pop_bins),
+                    )
+)
+max(d_lc$lc_g)
+sum(d_lc$cases_group)
+ADI_cases_total
+
+# Add data identifier: year
+
+d_lc <- d_lc |> mutate(year = year)
+
+d_all <- bind_rows(d_all, d_lc)
+
+
+
+
 # ==========  Gini  ==========
+
+
+
+
+
 
 d_dec_lc <- d_dec |> 
   select(year, pop_bins, lc_p, starts_with("lc_L")) |>
