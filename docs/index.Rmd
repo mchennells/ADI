@@ -552,18 +552,6 @@ f_rate_change_orig
 
 # Focusing on inequality
 
-Established that there
-
--   is significant variation in the ADI over time,
-
--   are important differences in changes by sub-category, and
-
--   recently, ADI rates have risen for the most deprived while they've
-    decreased for the most well-off
-
-One direction to explore further is to more **directly measure
-inequalit**y in the ADI.
-
 ### Measuring UK income inequality
 
 Some background of how inequality is usually measured might be useful.
@@ -693,7 +681,8 @@ around the time of the financial crisis, and then slowly falling.
 
 The figure also broadly hints at the role of public transfers in
 reducing inequality, with a slight widening in the difference between
-disposable and gross (after transfers) income.
+gross (after tax) and disposable (after transfers / income distribution
+measures) income.
 
 ```{r UK Gini, echo=FALSE, message=FALSE, warning=FALSE}
 d_UK_gini_long <- d_UK_gini |>
@@ -1410,15 +1399,32 @@ f_theil <- ggplot(
   scale_y_continuous(name = "Theil value") +
   scale_x_discrete(name = "year") +
   scale_color_discrete(name = "Theil Component") +
-  guides(color = guide_legend(reverse = TRUE)) +
   theme_ipsum() +
   theme(
     axis.title.y = element_text(color = mainColor, size = 20),
     axis.title.x = element_text(color = yearColor, size = 20)
   ) +
+  guides(color = guide_legend(reverse = TRUE)) +
   ggtitle("Theil ADI measure, between versus within Districts")
 f_theil
 
 ```
 
 # Conclusion
+
+-   ADI could provide a useful addition to social research and modelling
+    of local attitudes that infrequent and ordinal-only IMD does not
+
+-   Sub-categories of ADI matter and should be accounted for: vary in
+    both magnitude and volatility over time
+
+-   Measuring inequality using ADI across geographic regions shows
+    promise: job claims show largest inequality while mental health
+    cases show very little inequality
+
+-   Offers up the opportunity of deep-diving into and exploring why some
+    Districts and LSOAs greatly worsen or improve (perhaps relative to
+    'peers')
+
+-   Work to be done to merge statistical (ONS) and administrative
+    (political wards) information over time
