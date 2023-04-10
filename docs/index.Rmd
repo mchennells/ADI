@@ -1242,8 +1242,8 @@ driven by differences between districts or within the districts
 themselves.
 
 This approach has more general application: is inequality greater
-between or within rural vs urban spaces, or within or between race and
-gender groupings?
+between or within **rural vs urban spaces**, or within or between **race
+and gender groupings**?
 
 Thankfully, there's a measure of inequality that's suitable for this:
 **Theil's generalised entropy measure** **of inequality** can be broken
