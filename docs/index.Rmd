@@ -73,10 +73,10 @@ lcColor <- "#b31307"
 Deprivation: "a state of exclusion from the ordinary customs and
 activities of society."
 
-The [Annual Deprivation
-Index](https://www.annualdeprivationindex.co.uk/) (ADI) is an up to date
-data source on core deprivation metrics in the cities, towns and regions
-of England.
+The [**Annual Deprivation
+Index**](https://www.annualdeprivationindex.co.uk/) **(ADI)** is an up
+to date data source on core deprivation metrics in the cities, towns and
+regions of England.
 
 Recently published on **3 March 2023** by the organisation
 [Autonomy](https://autonomy.work/) in conjunction with academics.
